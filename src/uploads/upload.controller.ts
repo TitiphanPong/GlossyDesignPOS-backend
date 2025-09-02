@@ -10,7 +10,7 @@ import {
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { UploadService } from './upload.service';
-import { uploadConfig } from '../modules/uploads/upload.config';
+import { uploadConfig } from './upload.config';
 
 @Controller('upload')
 export class UploadController {
