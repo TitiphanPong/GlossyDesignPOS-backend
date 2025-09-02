@@ -4,24 +4,19 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { ServeStaticModule } from '@nestjs/serve-static';
 import { join } from 'path';
 import { PaymentsModule } from './modules/payments/payments.module';
-import { UploadsModule } from './modules/uploads/uploads.module';
 import { PricingModule } from './modules/pricing/pricing.module';
 import { ProductModule } from './products/product.module';
+import { UploadModule } from './uploads/upload.module';
+
 
 
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    UploadModule,
     MongooseModule.forRoot(process.env.MONGODB_URI as string),
-    // เสิร์ฟไฟล์ที่อัปโหลดเป็น static
-    ServeStaticModule.forRoot({
-      rootPath: join(__dirname, '..', 'uploads'),
-      serveRoot: '/files',
-    }),
-
     PaymentsModule,
-    UploadsModule,
     PricingModule,
 
     //Product Module
