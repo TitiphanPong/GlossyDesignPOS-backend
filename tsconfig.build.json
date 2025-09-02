@@ -15,7 +15,8 @@
     "declaration": false,                        // ✅ ปิดเพื่อลด RAM
     "incremental": false,                        // ✅ ปิดเพื่อให้ build เร็วขึ้นใน CI/CD
     "baseUrl": "./",
-    "forceConsistentCasingInFileNames": true
+    "forceConsistentCasingInFileNames": true,
+    "strictPropertyInitialization": false
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "test", "**/*.spec.ts"]
