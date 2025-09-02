@@ -2,7 +2,6 @@ import { Body, Controller, Post } from '@nestjs/common';
 import { IsNumber, IsString, Min } from 'class-validator';
 import { PaymentsService } from './payments.service';
 
-
 class PromptPayDto {
   @IsString()
   ref!: string; // orderId หรือรหัสบิล

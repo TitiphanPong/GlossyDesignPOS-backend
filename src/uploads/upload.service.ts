@@ -22,29 +22,27 @@ export class UploadService {
   }
 
   async markAsCompleted(id: string) {
-  return this.uploadModel.findByIdAndUpdate(
-    id,
-    { status: 'completed' },
-    { new: true }
-  );
-}
+    return this.uploadModel.findByIdAndUpdate(
+      id,
+      { status: 'completed' },
+      { new: true },
+    );
+  }
 
-    async getAllUploads() {
+  async getAllUploads() {
     return this.uploadModel.find().sort({ createdAt: -1 });
   }
 
   async uploadToGoogleDrive(files: Express.Multer.File[], body: any) {
     const drive = google.drive({ version: 'v3', auth: this.oauth2Client });
 
-
-
     // ✅ แผนที่ Category → Google Drive Folder ID
     const categoryToFolderMap: Record<string, string> = {
-      'นามบัตร': '14Vsoxz_nkrUYiezn2L-rb3tMg8X9uiRN',
-      'ตรายาง': '1ciFV6wByfkfrCaC5QSvhCW69oTv1AD_m',
+      นามบัตร: '14Vsoxz_nkrUYiezn2L-rb3tMg8X9uiRN',
+      ตรายาง: '1ciFV6wByfkfrCaC5QSvhCW69oTv1AD_m',
       'ถ่ายเอกสาร & ปริ้นงาน': '1FtRO5cB1JZ4E58-ed9YqP2icxuGtYsZk',
-      'สติ๊กเกอร์': '1J4zSdqGiZowBlCTnYm48d9QweoDAj5ZY',
-      'อื่นๆ': '1Oo4ipak91vDKiXzKhIxGzxkDYr0RD9pE',
+      สติ๊กเกอร์: '1J4zSdqGiZowBlCTnYm48d9QweoDAj5ZY',
+      อื่นๆ: '1Oo4ipak91vDKiXzKhIxGzxkDYr0RD9pE',
     };
 
     // ✅ หา folder ID ตาม category ที่ลูกค้าเลือก

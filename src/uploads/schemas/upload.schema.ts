@@ -16,7 +16,7 @@ export class Upload {
 
   @Prop()
   category: string;
-  
+
   @Prop({ default: 'pending' })
   status: string;
 

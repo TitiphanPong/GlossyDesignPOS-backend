@@ -8,9 +8,6 @@ import { PricingModule } from './modules/pricing/pricing.module';
 import { ProductModule } from './products/product.module';
 import { UploadModule } from './uploads/upload.module';
 
-
-
-
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),

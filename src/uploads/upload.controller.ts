@@ -22,9 +22,9 @@ export class UploadController {
   }
 
   @Patch(':id/complete')
-async markComplete(@Param('id') id: string) {
-  return this.uploadService.markAsCompleted(id);
-}
+  async markComplete(@Param('id') id: string) {
+    return this.uploadService.markAsCompleted(id);
+  }
 
   // ✅ อัปโหลดไฟล์
   @Post()
