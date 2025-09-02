@@ -1,4 +1,22 @@
 {
-  "extends": "./tsconfig.json",
-  "exclude": ["node_modules", "test", "dist", "**/*spec.ts"]
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "emitDecoratorMetadata": true,
+    "experimentalDecorators": true,
+    "target": "ES2020",                          // ✅ เสถียรกว่า ES2023
+    "outDir": "./dist",
+    "removeComments": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "sourceMap": false,                          // ✅ ปิดเพื่อลดขนาด/หน่วยความจำ
+    "declaration": false,                        // ✅ ปิดเพื่อลด RAM
+    "incremental": false,                        // ✅ ปิดเพื่อให้ build เร็วขึ้นใน CI/CD
+    "baseUrl": "./",
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist", "test", "**/*.spec.ts"]
 }
