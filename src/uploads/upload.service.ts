@@ -1,9 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import { google } from 'googleapis';
-import * as stream from 'stream';
+import * as fs from 'fs';
+import { promisify } from 'util';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Upload, UploadDocument } from './schemas/upload.schema';
+
+const unlinkAsync = promisify(fs.unlink); // สำหรับลบไฟล์หลัง upload
 
 @Injectable()
 export class UploadService {
@@ -45,23 +48,22 @@ export class UploadService {
       อื่นๆ: '1Oo4ipak91vDKiXzKhIxGzxkDYr0RD9pE',
     };
 
-    // ✅ หา folder ID ตาม category ที่ลูกค้าเลือก
     const targetFolderId =
       categoryToFolderMap[body.category] || process.env.GOOGLE_FOLDER_ID!;
 
     const uploadedFiles = await Promise.all(
       files.map(async (file) => {
-        const bufferStream = new stream.PassThrough();
-        bufferStream.end(file.buffer);
+        const filePath = file.path; // ← ได้จาก multer.diskStorage
+        const fileStream = fs.createReadStream(filePath); // ✅ ใช้ stream แทน buffer
 
         const response = await drive.files.create({
           requestBody: {
             name: file.originalname,
-            parents: [targetFolderId], // ✅ ใช้ folder ตาม category
+            parents: [targetFolderId],
           },
           media: {
             mimeType: file.mimetype,
-            body: bufferStream,
+            body: fileStream,
           },
           fields: 'id, name',
         });
@@ -76,6 +78,9 @@ export class UploadService {
         });
 
         const publicUrl = `https://drive.google.com/uc?id=${response.data.id}&export=download`;
+
+        // ✅ ลบไฟล์ออกจาก disk หลังอัปโหลดเสร็จ
+        await unlinkAsync(filePath);
 
         return {
           fileId: response.data.id,
@@ -94,7 +99,6 @@ export class UploadService {
       files: uploadedFiles,
     });
 
-    // ✅ ส่งกลับไปให้ frontend
     return {
       message: 'Upload success',
       customerName: body.customerName,
