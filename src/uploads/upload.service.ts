@@ -36,6 +36,14 @@ export class UploadService {
     return this.uploadModel.find().sort({ createdAt: -1 });
   }
 
+  async updateUpload(id: string, updateData: Partial<Upload>) {
+  return this.uploadModel.findByIdAndUpdate(id, updateData, { new: true });
+}
+
+  async deleteUpload(id: string) {
+    return this.uploadModel.findByIdAndDelete(id);
+  }
+
   async uploadToGoogleDrive(files: Express.Multer.File[], body: any) {
     const drive = google.drive({ version: 'v3', auth: this.oauth2Client });
 
