@@ -18,7 +18,7 @@ export class Upload {
   category: string;
 
   @Prop({ enum: ['pending', 'completed'], default: 'pending' })
-status: string;
+  status: string;
 
   @Prop({ type: Array })
   files: {

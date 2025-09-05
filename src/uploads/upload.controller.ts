@@ -43,7 +43,7 @@ export class UploadController {
     return this.uploadService.updateUpload(id, body);
   }
 
-    @Delete(':id')
+  @Delete(':id')
   async deleteUpload(@Param('id') id: string) {
     return this.uploadService.deleteUpload(id);
   }

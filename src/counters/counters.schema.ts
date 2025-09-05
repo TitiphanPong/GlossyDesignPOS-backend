@@ -6,7 +6,7 @@ export type CounterDocument = Counter & Document;
 @Schema()
 export class Counter {
   @Prop({ required: true })
-  _id: string;   // เช่น "orderid"
+  _id: string; // เช่น "orderid"
 
   @Prop({ required: true, default: 0 })
   seq: number;

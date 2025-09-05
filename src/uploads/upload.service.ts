@@ -37,8 +37,8 @@ export class UploadService {
   }
 
   async updateUpload(id: string, updateData: Partial<Upload>) {
-  return this.uploadModel.findByIdAndUpdate(id, updateData, { new: true });
-}
+    return this.uploadModel.findByIdAndUpdate(id, updateData, { new: true });
+  }
 
   async deleteUpload(id: string) {
     return this.uploadModel.findByIdAndDelete(id);

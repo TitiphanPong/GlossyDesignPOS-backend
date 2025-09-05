@@ -7,7 +7,7 @@ export type OrderDocument = Order & Document;
 export class Order {
   // 👉 Base fields
 
-  @Prop({ required: true })
+  @Prop()
   orderId: string;
 
   @Prop()
@@ -45,7 +45,12 @@ export class Order {
       },
     ],
   })
-  cart: any[];
+  cart: {
+    name: string;
+    unitPrice: number;
+    totalPrice: number;
+    extra?: Record<string, any>;
+  }[];
 }
 
 export const OrderSchema = SchemaFactory.createForClass(Order);
