@@ -8,8 +8,8 @@ async function bootstrap() {
   // ✅ ระบุ origin ที่อนุญาต (Frontend Dev + Prod)
   app.enableCors({
     origin: [
-      'http://localhost:3000',             // Dev frontend
-      'https://glossy-design.vercel.app',  // Prod frontend
+      'http://localhost:3000', // Dev frontend
+      'https://glossy-design.vercel.app', // Prod frontend
     ],
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   });

@@ -23,16 +23,16 @@ export class OrdersController {
     return this.ordersService.findAll();
   }
 
-    @Get('summary')
+  @Get('summary')
   async getSummary() {
     return this.ordersService.getSummary();
   }
 
   // ✅ SSE stream สำหรับหน้า Customer
-@Sse('events')
-events(): Observable<any> {
-  return this.ordersSse.asObservable();
-}
+  @Sse('events')
+  events(): Observable<any> {
+    return this.ordersSse.asObservable();
+  }
 
   // (ตัวเลือก) Endpoint ดึงออเดอร์ล่าสุดที่เป็น active (pending/paid)
   @Get('latest')

@@ -65,37 +65,48 @@ export class OrdersService {
   }
 
   // ==== (ของเดิม) สรุปยอด ใช้ต่อได้เหมือนเดิม ====
-// ==== (แก้ไข getSummary) ==== 
-async getSummary() {
-  const startOfDay = new Date(new Date().setHours(0, 0, 0, 0));
+  // ==== (แก้ไข getSummary) ====
+  async getSummary() {
+    const startOfDay = new Date(new Date().setHours(0, 0, 0, 0));
 
-  const totalSalesToday = await this.orderModel.aggregate([
-    { $match: { status: 'paid', createdAt: { $gte: startOfDay } } },
-    { $group: { _id: null, total: { $sum: '$total' } } },
-  ]);
+    const totalSalesToday = await this.orderModel.aggregate([
+      { $match: { status: 'paid', createdAt: { $gte: startOfDay } } },
+      { $group: { _id: null, total: { $sum: '$total' } } },
+    ]);
 
-  const totalCashToday = await this.orderModel.aggregate([
-    { $match: { status: 'paid', payment: 'cash', createdAt: { $gte: startOfDay } } },
-    { $group: { _id: null, total: { $sum: '$total' } } },
-  ]);
+    const totalCashToday = await this.orderModel.aggregate([
+      {
+        $match: {
+          status: 'paid',
+          payment: 'cash',
+          createdAt: { $gte: startOfDay },
+        },
+      },
+      { $group: { _id: null, total: { $sum: '$total' } } },
+    ]);
 
-  const totalPromptPayToday = await this.orderModel.aggregate([
-    { $match: { status: 'paid', payment: 'promptpay', createdAt: { $gte: startOfDay } } },
-    { $group: { _id: null, total: { $sum: '$total' } } },
-  ]);
+    const totalPromptPayToday = await this.orderModel.aggregate([
+      {
+        $match: {
+          status: 'paid',
+          payment: 'promptpay',
+          createdAt: { $gte: startOfDay },
+        },
+      },
+      { $group: { _id: null, total: { $sum: '$total' } } },
+    ]);
 
-  // 👇 ตรงนี้แก้เพิ่ม filter เฉพาะ "วันนี้" ด้วย
-  const completedCount = await this.orderModel.countDocuments({
-    status: 'paid',
-    createdAt: { $gte: startOfDay },
-  });
+    // 👇 ตรงนี้แก้เพิ่ม filter เฉพาะ "วันนี้" ด้วย
+    const completedCount = await this.orderModel.countDocuments({
+      status: 'paid',
+      createdAt: { $gte: startOfDay },
+    });
 
-  return {
-    salesToday: totalSalesToday[0]?.total ?? 0,
-    cashToday: totalCashToday[0]?.total ?? 0,
-    promptPayToday: totalPromptPayToday[0]?.total ?? 0,
-    completed: completedCount,
-  };
-}
-
+    return {
+      salesToday: totalSalesToday[0]?.total ?? 0,
+      cashToday: totalCashToday[0]?.total ?? 0,
+      promptPayToday: totalPromptPayToday[0]?.total ?? 0,
+      completed: completedCount,
+    };
+  }
 }

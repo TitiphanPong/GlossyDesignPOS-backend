@@ -15,6 +15,6 @@ import { OrdersSseService } from './orders.sse.service';
     ]),
   ],
   controllers: [OrdersController],
-  providers: [OrdersService, CounterService ,OrdersSseService],
+  providers: [OrdersService, CounterService, OrdersSseService],
 })
 export class OrdersModule {}

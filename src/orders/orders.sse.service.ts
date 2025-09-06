@@ -2,14 +2,14 @@
 import { Injectable, OnModuleDestroy } from '@nestjs/common';
 import { Subject, Observable, interval, merge, map } from 'rxjs';
 
-type CustomerEvent =
-  | { type: 'order'; payload: any | null }
-  | { type: 'ping' };
+type CustomerEvent = { type: 'order'; payload: any | null } | { type: 'ping' };
 
 @Injectable()
 export class OrdersSseService implements OnModuleDestroy {
   private stream$ = new Subject<CustomerEvent>();
-  private heartbeat$ = interval(15000).pipe(map(() => ({ type: 'ping' as const })));
+  private heartbeat$ = interval(15000).pipe(
+    map(() => ({ type: 'ping' as const })),
+  );
 
   onModuleDestroy() {
     this.stream$.complete();
