@@ -15,4 +15,9 @@ export class OrdersController {
   async findAll() {
     return this.ordersService.findAll();
   }
+
+  @Get('summary')
+  async getSummary() {
+    return this.ordersService.getSummary();
+  }
 }
