@@ -1,10 +1,17 @@
-import { Controller, Post, Body, Get } from '@nestjs/common';
+// src/orders/orders.controller.ts
+import { Controller, Post, Body, Get, Param, Patch } from '@nestjs/common';
+import { Sse } from '@nestjs/common';
+import { Observable } from 'rxjs';
 import { OrdersService } from './orders.service';
+import { OrdersSseService } from './orders.sse.service';
 import { Order } from './orders.schema';
 
 @Controller('orders')
 export class OrdersController {
-  constructor(private readonly ordersService: OrdersService) {}
+  constructor(
+    private readonly ordersService: OrdersService,
+    private readonly ordersSse: OrdersSseService,
+  ) {}
 
   @Post()
   async create(@Body() order: Partial<Order>) {
@@ -16,8 +23,29 @@ export class OrdersController {
     return this.ordersService.findAll();
   }
 
-  @Get('summary')
+    @Get('summary')
   async getSummary() {
     return this.ordersService.getSummary();
+  }
+
+  // ✅ SSE stream สำหรับหน้า Customer
+@Sse('events')
+events(): Observable<any> {
+  return this.ordersSse.asObservable();
+}
+
+  // (ตัวเลือก) Endpoint ดึงออเดอร์ล่าสุดที่เป็น active (pending/paid)
+  @Get('latest')
+  async latestActive() {
+    return this.ordersService.findLatestActive();
+  }
+
+  // (ตัวเลือก) Endpoint เปลี่ยนสถานะ แบบเรียบง่าย
+  @Patch(':id/status')
+  async updateStatus(
+    @Param('id') id: string,
+    @Body() body: { status: 'pending' | 'paid' | 'cancelled' },
+  ) {
+    return this.ordersService.updateStatus(id, body.status);
   }
 }

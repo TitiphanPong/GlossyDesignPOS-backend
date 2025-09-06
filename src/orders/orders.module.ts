@@ -5,6 +5,7 @@ import { OrdersService } from './orders.service';
 import { Order, OrderSchema } from './orders.schema';
 import { Counter, CounterSchema } from '../counters/counters.schema';
 import { CounterService } from '../counters/counter.service';
+import { OrdersSseService } from './orders.sse.service';
 
 @Module({
   imports: [
@@ -14,6 +15,6 @@ import { CounterService } from '../counters/counter.service';
     ]),
   ],
   controllers: [OrdersController],
-  providers: [OrdersService, CounterService],
+  providers: [OrdersService, CounterService ,OrdersSseService],
 })
 export class OrdersModule {}

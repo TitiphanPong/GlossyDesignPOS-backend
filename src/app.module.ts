@@ -9,7 +9,10 @@ import { OrdersModule } from './orders/orders.module';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true }),
+    ConfigModule.forRoot({
+      isGlobal: true,
+      envFilePath: `.env.${process.env.NODE_ENV || 'development'}`, // เลือกไฟล์อัตโนมัติ
+    }),
     UploadModule,
     MongooseModule.forRoot(process.env.MONGODB_URI as string),
     PaymentsModule,
