@@ -1,8 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
-import { PaymentsModule } from './modules/payments/payments.module';
-import { PricingModule } from './modules/pricing/pricing.module';
 import { ProductModule } from './products/product.module';
 import { UploadModule } from './uploads/upload.module';
 import { OrdersModule } from './orders/orders.module';
@@ -15,8 +13,6 @@ import { OrdersModule } from './orders/orders.module';
     }),
     UploadModule,
     MongooseModule.forRoot(process.env.MONGODB_URI as string),
-    PaymentsModule,
-    PricingModule,
     OrdersModule,
 
     //Product Module

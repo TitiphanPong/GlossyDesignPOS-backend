@@ -6,7 +6,7 @@ import { Order, OrderDocument } from './orders.schema';
 import { CounterService } from '../counters/counter.service';
 import { OrdersSseService } from './orders.sse.service';
 
-type OrderStatus = 'pending' | 'paid' | 'cancelled';
+type OrderStatus = 'pending' | 'partial' | 'paid' | 'cancelled';
 
 @Injectable()
 export class OrdersService {
@@ -55,6 +55,8 @@ export class OrdersService {
 
     if (status === 'pending') {
       this.ordersSse.emitOrder(updated);
+    } else if (status === 'partial') {
+      this.ordersSse.emitOrder(updated); // ✅ โชว์บนจอ customer ต่อ
     } else if (status === 'paid') {
       this.ordersSse.emitOrderAndAutoClear(updated, 7000);
     } else if (status === 'cancelled') {
@@ -70,35 +72,79 @@ export class OrdersService {
     const startOfDay = new Date(new Date().setHours(0, 0, 0, 0));
 
     const totalSalesToday = await this.orderModel.aggregate([
-      { $match: { status: 'paid', createdAt: { $gte: startOfDay } } },
-      { $group: { _id: null, total: { $sum: '$total' } } },
+      {
+        $match: {
+          status: { $in: ['paid', 'partial'] },
+          createdAt: { $gte: startOfDay },
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          total: {
+            $sum: {
+              $cond: [
+                { $eq: ['$status', 'partial'] },
+                '$depositTotal', // partial → นับเฉพาะยอดที่ได้รับแล้ว
+                '$total', // paid → นับเต็ม
+              ],
+            },
+          },
+        },
+      },
     ]);
 
     const totalCashToday = await this.orderModel.aggregate([
       {
         $match: {
-          status: 'paid',
+          status: { $in: ['paid', 'partial'] },
           payment: 'cash',
           createdAt: { $gte: startOfDay },
         },
       },
-      { $group: { _id: null, total: { $sum: '$total' } } },
+      {
+        $group: {
+          _id: null,
+          total: {
+            $sum: {
+              $cond: [
+                { $eq: ['$status', 'partial'] },
+                '$depositTotal',
+                '$total',
+              ],
+            },
+          },
+        },
+      },
     ]);
 
     const totalPromptPayToday = await this.orderModel.aggregate([
       {
         $match: {
-          status: 'paid',
+          status: { $in: ['paid', 'partial'] },
           payment: 'promptpay',
           createdAt: { $gte: startOfDay },
         },
       },
-      { $group: { _id: null, total: { $sum: '$total' } } },
+      {
+        $group: {
+          _id: null,
+          total: {
+            $sum: {
+              $cond: [
+                { $eq: ['$status', 'partial'] },
+                '$depositTotal',
+                '$total',
+              ],
+            },
+          },
+        },
+      },
     ]);
 
     // 👇 ตรงนี้แก้เพิ่ม filter เฉพาะ "วันนี้" ด้วย
     const completedCount = await this.orderModel.countDocuments({
-      status: 'paid',
+      status: { $in: ['paid', 'partial'] }, // ✅ นับทั้ง paid + partial
       createdAt: { $gte: startOfDay },
     });
 
@@ -108,5 +154,36 @@ export class OrdersService {
       promptPayToday: totalPromptPayToday[0]?.total ?? 0,
       completed: completedCount,
     };
+  }
+
+  async findByOrderId(orderId: string) {
+    return this.orderModel.findOne({ orderId }).exec();
+  }
+
+  async addPayment(id: string, amount: number, method: 'cash' | 'promptpay') {
+    const order = await this.orderModel.findById(id);
+    if (!order) throw new Error('Order not found');
+
+    if (amount > order.remainingTotal) {
+      amount = order.remainingTotal;
+    }
+
+    order.depositTotal += amount;
+    order.remainingTotal = order.total - order.depositTotal;
+
+    order.payments.push({ amount, method, paidAt: new Date() });
+
+    order.status = order.remainingTotal === 0 ? 'paid' : 'partial';
+
+    const updated = await order.save();
+
+    // แจ้ง SSE ไปยังหน้าลูกค้า
+    if (order.status === 'paid') {
+      this.ordersSse.emitOrderAndAutoClear(updated.toObject(), 7000);
+    } else {
+      this.ordersSse.emitOrder(updated.toObject());
+    }
+
+    return updated;
   }
 }

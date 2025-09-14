@@ -35,8 +35,29 @@ export class Order {
   @Prop({ enum: ['cash', 'promptpay'], required: true })
   payment: 'cash' | 'promptpay';
 
-  @Prop({ enum: ['pending', 'paid', 'cancelled'], default: 'pending' })
-  status: 'pending' | 'paid' | 'cancelled';
+  @Prop({
+    enum: ['pending', 'partial', 'paid', 'cancelled'],
+    default: 'pending',
+  })
+  status: 'pending' | 'partial' | 'paid' | 'cancelled';
+
+  @Prop({ enum: ['yes', 'no'], default: 'no' })
+  taxInvoice: 'yes' | 'no';
+
+  @Prop({ default: 0 })
+  vatAmount: number;
+
+  @Prop({
+    type: [
+      {
+        amount: Number,
+        method: { type: String, enum: ['cash', 'promptpay'] },
+        paidAt: { type: Date, default: Date.now },
+      },
+    ],
+    default: [],
+  })
+  payments: { amount: number; method: 'cash' | 'promptpay'; paidAt: Date }[];
 
   // 👉 รายการสินค้า (cart)
   @Prop({

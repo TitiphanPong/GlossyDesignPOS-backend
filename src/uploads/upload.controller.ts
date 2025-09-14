@@ -48,6 +48,16 @@ export class UploadController {
     return this.uploadService.deleteUpload(id);
   }
 
+  @Get('quota')
+  async getQuota() {
+    return this.uploadService.getDriveQuota();
+  }
+
+  @Get('quota/folders')
+  async getQuotaByFolders() {
+    return this.uploadService.getUsageByCategory();
+  }
+
   // ✅ อัปโหลดไฟล์แบบใช้ diskStorage
   @Post()
   @UseInterceptors(FilesInterceptor('files', 10, uploadConfig)) // ✅ ใส่ config และ limit

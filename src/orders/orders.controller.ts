@@ -48,4 +48,17 @@ export class OrdersController {
   ) {
     return this.ordersService.updateStatus(id, body.status);
   }
+
+  @Get('by-order-id/:orderId')
+  async getByOrderId(@Param('orderId') orderId: string) {
+    return this.ordersService.findByOrderId(orderId);
+  }
+
+  @Patch(':id/payments')
+  async addPayment(
+    @Param('id') id: string,
+    @Body() body: { amount: number; method: 'cash' | 'promptpay' },
+  ) {
+    return this.ordersService.addPayment(id, body.amount, body.method);
+  }
 }

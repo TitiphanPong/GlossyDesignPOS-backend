@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { google } from 'googleapis';
+import { google, drive_v3 } from 'googleapis';
 import * as fs from 'fs';
 import { promisify } from 'util';
 import { InjectModel } from '@nestjs/mongoose';
@@ -22,6 +22,12 @@ export class UploadService {
     this.oauth2Client.setCredentials({
       refresh_token: process.env.GOOGLE_REFRESH_TOKEN,
     });
+  }
+
+  async getDriveQuota() {
+    const drive = google.drive({ version: 'v3', auth: this.oauth2Client });
+    const res = await drive.about.get({ fields: 'storageQuota' });
+    return res.data.storageQuota;
   }
 
   async markAsCompleted(id: string) {
@@ -115,5 +121,53 @@ export class UploadService {
       category: body.category,
       files: uploadedFiles,
     };
+  }
+
+  async getFolderUsage(folderId: string) {
+    const drive = google.drive({ version: 'v3', auth: this.oauth2Client });
+
+    let pageToken: string | undefined = undefined;
+    let totalSize = 0;
+
+    do {
+      const res: drive_v3.Schema$FileList = (
+        await drive.files.list({
+          q: `'${folderId}' in parents and trashed = false`,
+          fields: 'nextPageToken, files(id, name, size)',
+          pageSize: 1000,
+          pageToken,
+        })
+      ).data;
+
+      res.files?.forEach((file: drive_v3.Schema$File) => {
+        if (file.size) totalSize += Number(file.size);
+      });
+
+      pageToken = res.nextPageToken || undefined;
+    } while (pageToken);
+
+    return totalSize; // bytes
+  }
+
+  async getUsageByCategory() {
+    const categoryToFolderMap: Record<string, string> = {
+      นามบัตร: '14Vsoxz_nkrUYiezn2L-rb3tMg8X9uiRN',
+      ตรายาง: '1ciFV6wByfkfrCaC5QSvhCW69oTv1AD_m',
+      'ถ่ายเอกสาร & ปริ้นงาน': '1FtRO5cB1JZ4E58-ed9YqP2icxuGtYsZk',
+      สติ๊กเกอร์: '1J4zSdqGiZowBlCTnYm48d9QweoDAj5ZY',
+      อื่นๆ: '1Oo4ipak91vDKiXzKhIxGzxkDYr0RD9pE',
+    };
+
+    const result: Record<string, any> = {};
+
+    for (const [category, folderId] of Object.entries(categoryToFolderMap)) {
+      const sizeBytes = await this.getFolderUsage(folderId);
+      result[category] = {
+        size: sizeBytes,
+        sizeGB: (sizeBytes / 1024 ** 2).toFixed(2) + ' MB',
+      };
+    }
+
+    return result;
   }
 }
