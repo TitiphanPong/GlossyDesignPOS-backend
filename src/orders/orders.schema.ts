@@ -77,6 +77,9 @@ export class Order {
         shape: { type: String }, // circle | square
         size: { type: String }, // ขนาดตรายาง
 
+        // --- โพสการ์ด ---
+        setCount: Number, // ✅ จำนวนชุด
+
         // --- ใช้ร่วมกัน ---
         qty: Number,
         unitPrice: Number,
@@ -103,6 +106,9 @@ export class Order {
     type?: string;
     shape?: string;
     size?: string;
+
+    // --- โพสการ์ด ---
+    setCount?: number; // ✅ จำนวนชุด
 
     // --- ใช้ร่วมกัน ---
     qty: number;
