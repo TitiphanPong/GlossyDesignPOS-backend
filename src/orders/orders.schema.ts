@@ -80,6 +80,19 @@ export class Order {
         // --- โพสการ์ด ---
         setCount: Number, // ✅ จำนวนชุด
 
+        // --- อิงค์เจ็ท ---
+        inkjetType: { type: String }, // เช่น paper-gloss, vinyl ฯลฯ
+        sizeFlex: [
+          {
+            height: String,
+            width: String,
+          },
+        ],
+
+        // --- สติ๊กเกอร์ PVC ---
+
+        stickerPVCType: String,
+
         // --- ใช้ร่วมกัน ---
         qty: Number,
         unitPrice: Number,
@@ -109,6 +122,10 @@ export class Order {
 
     // --- โพสการ์ด ---
     setCount?: number; // ✅ จำนวนชุด
+
+    // --- อิงค์เจ็ท ---
+    inkjetType?: string;
+    sizeFlex?: { height: string; width: string }[];
 
     // --- ใช้ร่วมกัน ---
     qty: number;
