@@ -11,22 +11,22 @@ export enum UploadStatus {
 @Schema({ timestamps: true })
 export class Upload {
   @Prop({ required: true, unique: true, index: true })
-  uploadId: string;
+  uploadId!: string;
 
   @Prop({ required: true, unique: true, index: true })
-  orderCode: string;
+  orderCode!: string;
 
   @Prop({ required: true, maxlength: 120 })
-  customerName: string;
+  customerName!: string;
 
   @Prop({ required: true, maxlength: 20 })
-  phone: string;
+  phone!: string;
 
   @Prop()
   note?: string;
 
   @Prop({ type: String, required: true, enum: Object.values(JobType) })
-  jobType: JobType;
+  jobType!: JobType;
 
   @Prop({
     type: String,
@@ -34,7 +34,7 @@ export class Upload {
     enum: Object.values(UploadStatus),
     default: UploadStatus.PENDING,
   })
-  status: UploadStatus;
+  status!: UploadStatus;
 
   @Prop({
     type: [
@@ -48,7 +48,7 @@ export class Upload {
     ],
     required: true,
   })
-  files: Array<{
+  files!: Array<{
     originalName: string;
     sanitizedName: string;
     mimeType: string;

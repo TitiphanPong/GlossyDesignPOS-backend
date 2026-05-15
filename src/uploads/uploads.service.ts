@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { FilterQuery, isValidObjectId, Model } from 'mongoose';
-import { randomInt, randomUUID } from 'crypto';
+import { randomInt, randomUUID } from 'node:crypto';
 import dayjs from 'dayjs';
 import { CreateUploadDto } from './dto/create-upload.dto';
 import { UploadResponseDto } from './dto/upload-response.dto';
@@ -10,6 +10,8 @@ import { S3Service } from './s3/s3.service';
 import { sanitizeFilename } from './validators/upload-file.validator';
 import { ListUploadsQueryDto } from './dto/list-uploads-query.dto';
 import { UpdateUploadDto } from './dto/update-upload.dto';
+
+const REGEX_SPECIAL_CHARS = new RegExp(String.raw`[.*+?^\${}()|[\]\\]`, 'g');
 
 @Injectable()
 export class UploadsService {
@@ -41,7 +43,8 @@ export class UploadsService {
         contentType: file.mimetype,
         contentLength: file.size,
         metadata: {
-          customername: dto.customerName,
+          // S3 metadata is transmitted via HTTP headers; keep values ASCII-safe.
+          customername: this.toAsciiMetadata(dto.customerName),
           phonemasked: this.maskPhone(dto.phone),
           jobtype: dto.jobType,
         },
@@ -88,6 +91,10 @@ export class UploadsService {
     return `${'*'.repeat(phone.length - 4)}${phone.slice(-4)}`;
   }
 
+  private toAsciiMetadata(value: string): string {
+    return Buffer.from(value, 'utf8').toString('base64url');
+  }
+
   async listUploads(query: ListUploadsQueryDto): Promise<{
     data: Array<Record<string, unknown>>;
     page: number;
@@ -102,7 +109,7 @@ export class UploadsService {
       filter.status = query.status;
     }
     if (query.q?.trim()) {
-      const safe = query.q.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const safe = query.q.trim().replace(REGEX_SPECIAL_CHARS, '\\$&');
       filter.$or = [
         { customerName: { $regex: safe, $options: 'i' } },
         { phone: { $regex: safe, $options: 'i' } },
@@ -124,16 +131,15 @@ export class UploadsService {
     return { data, page, limit, total };
   }
 
-  async updateUploadById(id: string, dto: UpdateUploadDto): Promise<Record<string, unknown> | null> {
+  async updateUploadById(
+    id: string,
+    dto: UpdateUploadDto,
+  ): Promise<Record<string, unknown> | null> {
     const selector: FilterQuery<UploadDocument> = isValidObjectId(id)
       ? { $or: [{ uploadId: id }, { _id: id }] }
       : { uploadId: id };
     const row = await this.uploadModel
-      .findOneAndUpdate(
-        selector,
-        { $set: dto },
-        { new: true },
-      )
+      .findOneAndUpdate(selector, { $set: dto }, { new: true })
       .lean();
     if (!row) {
       return null;
@@ -156,7 +162,9 @@ export class UploadsService {
     return true;
   }
 
-  private async toListItem(row: UploadDocument | Record<string, unknown>): Promise<Record<string, unknown>> {
+  private async toListItem(
+    row: UploadDocument | Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
     const doc = row as {
       _id: unknown;
       uploadId: string;
