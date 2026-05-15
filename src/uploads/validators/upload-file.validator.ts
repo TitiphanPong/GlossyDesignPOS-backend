@@ -46,7 +46,10 @@ export function validateUploadedFiles(files: Express.Multer.File[]): void {
   for (const file of files) {
     const ext = extname(file.originalname).toLowerCase();
 
-    if (!ALLOWED_EXTENSIONS.has(ext) || !ALLOWED_MIME_TYPES.has(file.mimetype)) {
+    if (
+      !ALLOWED_EXTENSIONS.has(ext) ||
+      !ALLOWED_MIME_TYPES.has(file.mimetype)
+    ) {
       throw new BadRequestException(`Invalid file type: ${file.originalname}`);
     }
 

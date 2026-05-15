@@ -10,7 +10,9 @@ async function bootstrap() {
 
   const frontendOrigin = process.env.FRONTEND_ORIGIN;
   app.enableCors({
-    origin: frontendOrigin ? frontendOrigin.split(',').map((x) => x.trim()) : false,
+    origin: frontendOrigin
+      ? frontendOrigin.split(',').map((x) => x.trim())
+      : false,
     methods: ['POST', 'OPTIONS'],
   });
 

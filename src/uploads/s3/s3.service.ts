@@ -22,7 +22,9 @@ export class S3Service {
   constructor(private readonly configService: ConfigService) {
     const region = this.configService.get<string>('AWS_REGION');
     const accessKeyId = this.configService.get<string>('AWS_ACCESS_KEY_ID');
-    const secretAccessKey = this.configService.get<string>('AWS_SECRET_ACCESS_KEY');
+    const secretAccessKey = this.configService.get<string>(
+      'AWS_SECRET_ACCESS_KEY',
+    );
     const bucket = this.configService.get<string>('AWS_S3_BUCKET_PRIVATE');
 
     if (!region || !accessKeyId || !secretAccessKey || !bucket) {
@@ -63,12 +65,18 @@ export class S3Service {
         }),
       );
     } catch (error) {
-      this.logger.error(`Failed to upload S3 key ${params.key}`, error as Error);
+      this.logger.error(
+        `Failed to upload S3 key ${params.key}`,
+        error as Error,
+      );
       throw new InternalServerErrorException('Failed to upload file');
     }
   }
 
-  async createSignedDownloadUrl(key: string, expiresInSeconds = 300): Promise<string> {
+  async createSignedDownloadUrl(
+    key: string,
+    expiresInSeconds = 300,
+  ): Promise<string> {
     return getSignedUrl(
       this.s3Client,
       new GetObjectCommand({

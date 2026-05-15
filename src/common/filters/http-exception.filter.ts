@@ -29,11 +29,13 @@ export class HttpExceptionFilter implements ExceptionFilter {
       const message =
         typeof exceptionResponse === 'string'
           ? exceptionResponse
-          : (exceptionResponse as { message?: string | string[] }).message ??
-            exception.message;
+          : ((exceptionResponse as { message?: string | string[] }).message ??
+            exception.message);
 
-      if (status === HttpStatus.PAYLOAD_TOO_LARGE) {
-        response.status(HttpStatus.BAD_REQUEST).json({ message: 'File too large' });
+      if (status === 413) {
+        response
+          .status(HttpStatus.BAD_REQUEST)
+          .json({ message: 'File too large' });
         return;
       }
 

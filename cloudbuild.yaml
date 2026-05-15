@@ -16,7 +16,8 @@ steps:
         '--image', 'gcr.io/$PROJECT_ID/glossy-backend',
         '--platform', 'managed',
         '--region', 'asia-southeast1',
-        '--allow-unauthenticated'
+        '--allow-unauthenticated',
+        '--update-env-vars', 'NODE_ENV=production'
       ]
 
 images:

@@ -7,13 +7,14 @@ import { CounterService } from '../counters/counter.service';
 import { OrdersSseService } from './orders.sse.service';
 
 type OrderStatus = 'pending' | 'partial' | 'paid' | 'cancelled';
+type AggregateTotal = { _id: null; total: number };
 
 @Injectable()
 export class OrdersService {
   constructor(
-    @InjectModel(Order.name) private orderModel: Model<OrderDocument>,
-    private counterService: CounterService,
-    private ordersSse: OrdersSseService,
+    @InjectModel(Order.name) private readonly orderModel: Model<OrderDocument>,
+    private readonly counterService: CounterService,
+    private readonly ordersSse: OrdersSseService,
   ) {}
 
   async create(orderDto: Partial<Order>): Promise<Order> {
@@ -36,6 +37,10 @@ export class OrdersService {
   }
 
   // 👉 "ล่าสุดที่ active" = pending หรือ paid ที่อัปเดตล่าสุด
+  async findById(id: string): Promise<Order | null> {
+    return this.orderModel.findById(id).lean().exec();
+  }
+
   async findLatestActive(): Promise<Order | null> {
     return this.orderModel
       .findOne({ status: { $in: ['pending', 'paid'] } })
@@ -71,7 +76,7 @@ export class OrdersService {
   async getSummary() {
     const startOfDay = new Date(new Date().setHours(0, 0, 0, 0));
 
-    const totalSalesToday = await this.orderModel.aggregate([
+    const totalSalesToday = await this.orderModel.aggregate<AggregateTotal>([
       {
         $match: {
           status: { $in: ['paid', 'partial'] },
@@ -94,7 +99,7 @@ export class OrdersService {
       },
     ]);
 
-    const totalCashToday = await this.orderModel.aggregate([
+    const totalCashToday = await this.orderModel.aggregate<AggregateTotal>([
       {
         $match: {
           status: { $in: ['paid', 'partial'] },
@@ -118,29 +123,31 @@ export class OrdersService {
       },
     ]);
 
-    const totalPromptPayToday = await this.orderModel.aggregate([
-      {
-        $match: {
-          status: { $in: ['paid', 'partial'] },
-          payment: 'promptpay',
-          createdAt: { $gte: startOfDay },
+    const totalPromptPayToday = await this.orderModel.aggregate<AggregateTotal>(
+      [
+        {
+          $match: {
+            status: { $in: ['paid', 'partial'] },
+            payment: 'promptpay',
+            createdAt: { $gte: startOfDay },
+          },
         },
-      },
-      {
-        $group: {
-          _id: null,
-          total: {
-            $sum: {
-              $cond: [
-                { $eq: ['$status', 'partial'] },
-                '$depositTotal',
-                '$total',
-              ],
+        {
+          $group: {
+            _id: null,
+            total: {
+              $sum: {
+                $cond: [
+                  { $eq: ['$status', 'partial'] },
+                  '$depositTotal',
+                  '$total',
+                ],
+              },
             },
           },
         },
-      },
-    ]);
+      ],
+    );
 
     // 👇 ตรงนี้แก้เพิ่ม filter เฉพาะ "วันนี้" ด้วย
     const completedCount = await this.orderModel.countDocuments({

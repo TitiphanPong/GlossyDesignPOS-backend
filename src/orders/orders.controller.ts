@@ -1,6 +1,5 @@
 // src/orders/orders.controller.ts
-import { Controller, Post, Body, Get, Param, Patch } from '@nestjs/common';
-import { Sse } from '@nestjs/common';
+import { Controller, Post, Body, Get, Param, Patch, Sse } from '@nestjs/common';
 import { Observable } from 'rxjs';
 import { OrdersService } from './orders.service';
 import { OrdersSseService } from './orders.sse.service';
@@ -52,6 +51,11 @@ export class OrdersController {
   @Get('by-order-id/:orderId')
   async getByOrderId(@Param('orderId') orderId: string) {
     return this.ordersService.findByOrderId(orderId);
+  }
+
+  @Get(':id')
+  findOne(@Param('id') id: string) {
+    return this.ordersService.findById(id);
   }
 
   @Patch(':id/payments')

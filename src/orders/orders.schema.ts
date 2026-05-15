@@ -7,45 +7,48 @@ export type OrderDocument = Order & Document;
 export class Order {
   // 👉 Base fields
   @Prop()
-  orderId: string;
+  orderId!: string;
 
   // 👉 Customer info
   @Prop()
-  customerName: string;
+  customerName!: string;
 
   @Prop()
-  phoneNumber: string;
+  phoneNumber!: string;
 
   @Prop()
-  note: string; // หมายเหตุรวมทั้งบิล
+  note!: string; // หมายเหตุรวมทั้งบิล
 
   // 👉 Order summary
   @Prop({ required: true })
-  total: number;
+  total!: number;
 
   @Prop({ default: 0 })
-  discount: number;
+  discount!: number;
 
   @Prop({ default: 0 })
-  depositTotal: number;
+  depositTotal!: number;
 
   @Prop({ default: 0 })
-  remainingTotal: number;
+  remainingTotal!: number;
 
   @Prop({ enum: ['cash', 'promptpay'], required: true })
-  payment: 'cash' | 'promptpay';
+  payment!: 'cash' | 'promptpay';
 
   @Prop({
     enum: ['pending', 'partial', 'paid', 'cancelled'],
     default: 'pending',
   })
-  status: 'pending' | 'partial' | 'paid' | 'cancelled';
+  status!: 'pending' | 'partial' | 'paid' | 'cancelled';
 
   @Prop({ enum: ['yes', 'no'], default: 'no' })
-  taxInvoice: 'yes' | 'no';
+  taxInvoice!: 'yes' | 'no';
 
   @Prop({ default: 0 })
-  vatAmount: number;
+  vatAmount!: number;
+
+  @Prop({ default: 0 })
+  grandTotal!: number;
 
   @Prop({
     type: [
@@ -57,7 +60,7 @@ export class Order {
     ],
     default: [],
   })
-  payments: { amount: number; method: 'cash' | 'promptpay'; paidAt: Date }[];
+  payments!: { amount: number; method: 'cash' | 'promptpay'; paidAt: Date }[];
 
   // 👉 รายการสินค้า (cart)
   @Prop({
@@ -105,7 +108,7 @@ export class Order {
       },
     ],
   })
-  cart: {
+  cart!: {
     name: string;
     category?: string;
 
