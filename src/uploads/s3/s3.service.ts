@@ -1,4 +1,4 @@
-import {
+﻿import {
   Injectable,
   InternalServerErrorException,
   Logger,
@@ -34,7 +34,8 @@ export class S3Service {
     }
 
     this.bucket = bucket;
-    this.kmsKeyId = this.configService.get<string>('AWS_S3_KMS_KEY_ID');
+    const rawKmsKeyId = this.configService.get<string>('AWS_S3_KMS_KEY_ID');
+    this.kmsKeyId = rawKmsKeyId?.trim() ? rawKmsKeyId.trim() : undefined;
 
     this.s3Client = new S3Client({
       region,
@@ -58,10 +59,10 @@ export class S3Service {
           ContentType: params.contentType,
           ContentLength: params.contentLength,
           Metadata: params.metadata,
-          ServerSideEncryption: this.kmsKeyId
-            ? ServerSideEncryption.aws_kms
-            : ServerSideEncryption.AES256,
-          SSEKMSKeyId: this.kmsKeyId,
+          ...(this.kmsKeyId
+            ? { ServerSideEncryption: ServerSideEncryption.aws_kms }
+            : {}),
+          ...(this.kmsKeyId ? { SSEKMSKeyId: this.kmsKeyId } : {}),
         }),
       );
     } catch (error) {
