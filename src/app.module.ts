@@ -7,6 +7,7 @@ import { validateEnv } from './config/env.validation';
 import { OrdersModule } from './orders/orders.module';
 import { ProductModule } from './products/product.module';
 import { UploadsModule } from './uploads/uploads.module';
+import { HealthController } from './health.controller';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { UploadsModule } from './uploads/uploads.module';
     OrdersModule,
     ProductModule,
   ],
+  controllers: [HealthController],
   providers: [
     {
       provide: APP_GUARD,

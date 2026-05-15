@@ -13,7 +13,8 @@ async function bootstrap() {
     origin: frontendOrigin
       ? frontendOrigin.split(',').map((x) => x.trim())
       : false,
-    methods: ['POST', 'OPTIONS'],
+    methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
   });
 
   app.use(helmet());

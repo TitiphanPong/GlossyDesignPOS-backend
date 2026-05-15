@@ -1,13 +1,15 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { FilterQuery, isValidObjectId, Model } from 'mongoose';
 import { randomInt, randomUUID } from 'crypto';
 import dayjs from 'dayjs';
 import { CreateUploadDto } from './dto/create-upload.dto';
 import { UploadResponseDto } from './dto/upload-response.dto';
-import { Upload, UploadDocument } from './schemas/upload.schema';
+import { Upload, UploadDocument, UploadStatus } from './schemas/upload.schema';
 import { S3Service } from './s3/s3.service';
 import { sanitizeFilename } from './validators/upload-file.validator';
+import { ListUploadsQueryDto } from './dto/list-uploads-query.dto';
+import { UpdateUploadDto } from './dto/update-upload.dto';
 
 @Injectable()
 export class UploadsService {
@@ -61,6 +63,7 @@ export class UploadsService {
       phone: dto.phone,
       note: dto.note,
       jobType: dto.jobType,
+      status: UploadStatus.PENDING,
       files: uploadedFiles,
     });
 
@@ -83,5 +86,121 @@ export class UploadsService {
     }
 
     return `${'*'.repeat(phone.length - 4)}${phone.slice(-4)}`;
+  }
+
+  async listUploads(query: ListUploadsQueryDto): Promise<{
+    data: Array<Record<string, unknown>>;
+    page: number;
+    limit: number;
+    total: number;
+  }> {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+
+    const filter: FilterQuery<UploadDocument> = {};
+    if (query.status) {
+      filter.status = query.status;
+    }
+    if (query.q?.trim()) {
+      const safe = query.q.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      filter.$or = [
+        { customerName: { $regex: safe, $options: 'i' } },
+        { phone: { $regex: safe, $options: 'i' } },
+        { note: { $regex: safe, $options: 'i' } },
+      ];
+    }
+
+    const [rows, total] = await Promise.all([
+      this.uploadModel
+        .find(filter)
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      this.uploadModel.countDocuments(filter),
+    ]);
+
+    const data = await Promise.all(rows.map((row) => this.toListItem(row)));
+    return { data, page, limit, total };
+  }
+
+  async updateUploadById(id: string, dto: UpdateUploadDto): Promise<Record<string, unknown> | null> {
+    const selector: FilterQuery<UploadDocument> = isValidObjectId(id)
+      ? { $or: [{ uploadId: id }, { _id: id }] }
+      : { uploadId: id };
+    const row = await this.uploadModel
+      .findOneAndUpdate(
+        selector,
+        { $set: dto },
+        { new: true },
+      )
+      .lean();
+    if (!row) {
+      return null;
+    }
+    return this.toListItem(row);
+  }
+
+  async deleteUploadById(id: string): Promise<boolean> {
+    const selector: FilterQuery<UploadDocument> = isValidObjectId(id)
+      ? { $or: [{ uploadId: id }, { _id: id }] }
+      : { uploadId: id };
+    const row = await this.uploadModel.findOneAndDelete(selector);
+    if (!row) {
+      return false;
+    }
+
+    await Promise.all(
+      row.files.map((file) => this.s3Service.deleteObject(file.s3Key)),
+    );
+    return true;
+  }
+
+  private async toListItem(row: UploadDocument | Record<string, unknown>): Promise<Record<string, unknown>> {
+    const doc = row as {
+      _id: unknown;
+      uploadId: string;
+      customerName: string;
+      phone: string;
+      note?: string;
+      jobType: string;
+      status: string;
+      createdAt: Date;
+      files: Array<{
+        s3Key: string;
+        sanitizedName: string;
+        originalName: string;
+      }>;
+    };
+
+    const files = await Promise.all(
+      (doc.files ?? []).map(async (file) => {
+        let url: string | null = null;
+        try {
+          url = await this.s3Service.createSignedDownloadUrl(file.s3Key);
+        } catch {
+          url = null;
+        }
+
+        return {
+          fileId: file.s3Key,
+          name: file.originalName || file.sanitizedName,
+          url,
+        };
+      }),
+    );
+
+    return {
+      id: String(doc._id),
+      uploadId: doc.uploadId,
+      customerName: doc.customerName,
+      phone: doc.phone,
+      note: doc.note ?? '',
+      category: doc.jobType,
+      jobType: doc.jobType,
+      status: doc.status,
+      createdAt: doc.createdAt,
+      files,
+    };
   }
 }

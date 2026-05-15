@@ -3,6 +3,10 @@ import { Document } from 'mongoose';
 import { JobType } from '../dto/create-upload.dto';
 
 export type UploadDocument = Upload & Document;
+export enum UploadStatus {
+  PENDING = 'pending',
+  COMPLETED = 'completed',
+}
 
 @Schema({ timestamps: true })
 export class Upload {
@@ -23,6 +27,14 @@ export class Upload {
 
   @Prop({ type: String, required: true, enum: Object.values(JobType) })
   jobType: JobType;
+
+  @Prop({
+    type: String,
+    required: true,
+    enum: Object.values(UploadStatus),
+    default: UploadStatus.PENDING,
+  })
+  status: UploadStatus;
 
   @Prop({
     type: [

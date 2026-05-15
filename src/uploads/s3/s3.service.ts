@@ -5,6 +5,7 @@
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
+  DeleteObjectCommand,
   GetObjectCommand,
   PutObjectCommand,
   S3Client,
@@ -86,5 +87,19 @@ export class S3Service {
       }),
       { expiresIn: expiresInSeconds },
     );
+  }
+
+  async deleteObject(key: string): Promise<void> {
+    try {
+      await this.s3Client.send(
+        new DeleteObjectCommand({
+          Bucket: this.bucket,
+          Key: key,
+        }),
+      );
+    } catch (error) {
+      this.logger.error(`Failed to delete S3 key ${key}`, error as Error);
+      throw new InternalServerErrorException('Failed to delete file');
+    }
   }
 }
