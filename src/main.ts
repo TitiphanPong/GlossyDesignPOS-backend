@@ -1,26 +1,33 @@
-import { NestFactory } from '@nestjs/core';
-import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
+import { NestFactory } from '@nestjs/core';
+import helmet from 'helmet';
+import { json, urlencoded } from 'express';
+import { AppModule } from './app.module';
+import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  // ✅ ระบุ origin ที่อนุญาต (Frontend Dev + Prod)
+  const frontendOrigin = process.env.FRONTEND_ORIGIN;
   app.enableCors({
-    origin: [
-      'http://localhost:3000', // Dev frontend
-      'https://glossy-design.vercel.app', // Prod frontend
-    ],
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    origin: frontendOrigin ? frontendOrigin.split(',').map((x) => x.trim()) : false,
+    methods: ['POST', 'OPTIONS'],
   });
 
-  // ✅ Validation pipe
-  app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+  app.use(helmet());
+  app.use(json({ limit: '1mb' }));
+  app.use(urlencoded({ extended: true, limit: '1mb' }));
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      transform: true,
+      forbidNonWhitelisted: true,
+    }),
+  );
+  app.useGlobalFilters(new HttpExceptionFilter());
 
-  // ✅ Cloud Run จะ set PORT เอง
   const port = process.env.PORT || 8080;
   await app.listen(port, '0.0.0.0');
-
-  console.log(`🚀 API running on port ${port}`);
 }
-bootstrap();
+
+void bootstrap();
