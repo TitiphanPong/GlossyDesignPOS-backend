@@ -11,7 +11,7 @@ import { sanitizeFilename } from './validators/upload-file.validator';
 import { ListUploadsQueryDto } from './dto/list-uploads-query.dto';
 import { UpdateUploadDto } from './dto/update-upload.dto';
 
-const REGEX_SPECIAL_CHARS = new RegExp(String.raw`[.*+?^\${}()|[\]\\]`, 'g');
+const REGEX_SPECIAL_CHARS = /[.*+?^${}()|[\]\\]/g;
 
 @Injectable()
 export class UploadsService {
@@ -109,7 +109,7 @@ export class UploadsService {
       filter.status = query.status;
     }
     if (query.q?.trim()) {
-      const safe = query.q.trim().replace(REGEX_SPECIAL_CHARS, '\\$&');
+      const safe = query.q.trim().replace(REGEX_SPECIAL_CHARS, String.raw`\$&`);
       filter.$or = [
         { customerName: { $regex: safe, $options: 'i' } },
         { phone: { $regex: safe, $options: 'i' } },
