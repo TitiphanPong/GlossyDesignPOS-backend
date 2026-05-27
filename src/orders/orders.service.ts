@@ -1,42 +1,83 @@
-// src/orders/orders.service.ts
-import { Injectable } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  InternalServerErrorException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
+import { MongoServerError } from 'mongodb';
 import { Model } from 'mongoose';
-import { Order, OrderDocument } from './orders.schema';
-import { CounterService } from '../counters/counter.service';
+import { RunningNumberService } from '../counters/running-number.service';
+import { OrderResponseDto } from './dto/order-response.dto';
+import {
+  Order,
+  OrderDocument,
+  OrderStatus,
+  PaymentMethod,
+} from './orders.schema';
 import { OrdersSseService } from './orders.sse.service';
 
-type OrderStatus = 'pending' | 'partial' | 'paid' | 'cancelled';
 type AggregateTotal = { _id: null; total: number };
+type OrderPlainObject = Order & {
+  _id: unknown;
+  createdAt?: Date;
+  updatedAt?: Date;
+};
 
 @Injectable()
 export class OrdersService {
   constructor(
     @InjectModel(Order.name) private readonly orderModel: Model<OrderDocument>,
-    private readonly counterService: CounterService,
+    private readonly runningNumberService: RunningNumberService,
     private readonly ordersSse: OrdersSseService,
   ) {}
 
-  async create(orderDto: Partial<Order>): Promise<Order> {
-    const orderId = await this.counterService.getNextOrderId();
-    const createdOrder = new this.orderModel({
-      ...orderDto,
-      orderId,
-      status: orderDto.status ?? 'pending', // 👈 default เป็น pending
-    });
-    const saved = await createdOrder.save();
+  async create(orderDto: Partial<Order>): Promise<OrderResponseDto> {
+    const maxAttempts = 3;
 
-    // 👉 ส่ง plain object ออกไปให้ customer screen
-    this.ordersSse.emitOrder(saved.toObject());
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        const orderNumber =
+          await this.runningNumberService.generateOrderNumber();
+        const createdOrder = new this.orderModel({
+          ...orderDto,
+          orderNumber,
+          status: orderDto.status ?? 'pending',
+        });
+        createdOrder.orderId = createdOrder._id.toString();
+        const saved = await createdOrder.save();
+        const response = this.toOrderResponse(saved);
 
-    return saved;
+        this.ordersSse.emitOrder(response);
+
+        return response;
+      } catch (error) {
+        if (this.isDuplicateOrderNumberError(error)) {
+          if (attempt === maxAttempts) {
+            throw new ConflictException(
+              'Failed to generate a unique order number.',
+            );
+          }
+
+          continue;
+        }
+
+        if (this.isDuplicateKeyError(error)) {
+          throw new ConflictException(
+            'Duplicate value violates a unique index.',
+          );
+        }
+
+        throw error;
+      }
+    }
+
+    throw new InternalServerErrorException('Failed to create order.');
   }
 
   async findAll(): Promise<Order[]> {
     return this.orderModel.find().sort({ createdAt: -1 }).lean().exec();
   }
 
-  // 👉 "ล่าสุดที่ active" = pending หรือ paid ที่อัปเดตล่าสุด
   async findById(id: string): Promise<Order | null> {
     return this.orderModel.findById(id).lean().exec();
   }
@@ -49,7 +90,6 @@ export class OrdersService {
       .exec();
   }
 
-  // 👉 อัปเดตสถานะ แล้วส่ง SSE ด้วย
   async updateStatus(id: string, status: OrderStatus) {
     const updated = await this.orderModel
       .findByIdAndUpdate(id, { status }, { new: true })
@@ -58,10 +98,8 @@ export class OrdersService {
 
     if (!updated) return null;
 
-    if (status === 'pending') {
+    if (status === 'pending' || status === 'partial') {
       this.ordersSse.emitOrder(updated);
-    } else if (status === 'partial') {
-      this.ordersSse.emitOrder(updated); // ✅ โชว์บนจอ customer ต่อ
     } else if (status === 'paid') {
       this.ordersSse.emitOrderAndAutoClear(updated, 7000);
     } else if (status === 'cancelled') {
@@ -71,8 +109,6 @@ export class OrdersService {
     return updated;
   }
 
-  // ==== (ของเดิม) สรุปยอด ใช้ต่อได้เหมือนเดิม ====
-  // ==== (แก้ไข getSummary) ====
   async getSummary() {
     const startOfDay = new Date(new Date().setHours(0, 0, 0, 0));
 
@@ -90,8 +126,8 @@ export class OrdersService {
             $sum: {
               $cond: [
                 { $eq: ['$status', 'partial'] },
-                '$depositTotal', // partial → นับเฉพาะยอดที่ได้รับแล้ว
-                '$total', // paid → นับเต็ม
+                '$depositTotal',
+                '$total',
               ],
             },
           },
@@ -149,9 +185,8 @@ export class OrdersService {
       ],
     );
 
-    // 👇 ตรงนี้แก้เพิ่ม filter เฉพาะ "วันนี้" ด้วย
     const completedCount = await this.orderModel.countDocuments({
-      status: { $in: ['paid', 'partial'] }, // ✅ นับทั้ง paid + partial
+      status: { $in: ['paid', 'partial'] },
       createdAt: { $gte: startOfDay },
     });
 
@@ -163,11 +198,15 @@ export class OrdersService {
     };
   }
 
-  async findByOrderId(orderId: string) {
-    return this.orderModel.findOne({ orderId }).exec();
+  async findByOrderId(orderNumber: string) {
+    return this.orderModel
+      .findOne({
+        $or: [{ orderNumber }, { orderId: orderNumber }],
+      })
+      .exec();
   }
 
-  async addPayment(id: string, amount: number, method: 'cash' | 'promptpay') {
+  async addPayment(id: string, amount: number, method: PaymentMethod) {
     const order = await this.orderModel.findById(id);
     if (!order) throw new Error('Order not found');
 
@@ -177,14 +216,11 @@ export class OrdersService {
 
     order.depositTotal += amount;
     order.remainingTotal = order.total - order.depositTotal;
-
     order.payments.push({ amount, method, paidAt: new Date() });
-
     order.status = order.remainingTotal === 0 ? 'paid' : 'partial';
 
     const updated = await order.save();
 
-    // แจ้ง SSE ไปยังหน้าลูกค้า
     if (order.status === 'paid') {
       this.ordersSse.emitOrderAndAutoClear(updated.toObject(), 7000);
     } else {
@@ -192,5 +228,49 @@ export class OrdersService {
     }
 
     return updated;
+  }
+
+  private isDuplicateOrderNumberError(error: unknown): boolean {
+    if (!this.isDuplicateKeyError(error)) {
+      return false;
+    }
+
+    const keyPattern = (
+      error as MongoServerError & {
+        keyPattern?: Record<string, unknown>;
+      }
+    ).keyPattern;
+
+    return Boolean(keyPattern?.orderNumber);
+  }
+
+  private isDuplicateKeyError(error: unknown): error is MongoServerError {
+    return error instanceof MongoServerError && error.code === 11000;
+  }
+
+  private toOrderResponse(order: OrderDocument): OrderResponseDto {
+    const plain = order.toObject() as OrderPlainObject;
+
+    return {
+      _id: order._id.toString(),
+      orderId: plain.orderId ?? order._id.toString(),
+      orderNumber: plain.orderNumber,
+      customerName: plain.customerName,
+      phoneNumber: plain.phoneNumber,
+      note: plain.note,
+      total: plain.total,
+      discount: plain.discount,
+      depositTotal: plain.depositTotal,
+      remainingTotal: plain.remainingTotal,
+      payment: plain.payment,
+      status: plain.status,
+      taxInvoice: plain.taxInvoice,
+      vatAmount: plain.vatAmount,
+      grandTotal: plain.grandTotal,
+      payments: plain.payments,
+      cart: plain.cart,
+      createdAt: plain.createdAt,
+      updatedAt: plain.updatedAt,
+    };
   }
 }

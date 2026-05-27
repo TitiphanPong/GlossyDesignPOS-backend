@@ -1,15 +1,18 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Document } from 'mongoose';
+import { HydratedDocument } from 'mongoose';
 
-export type OrderDocument = Order & Document;
+export type PaymentMethod = 'cash' | 'promptpay';
+export type OrderStatus = 'pending' | 'partial' | 'paid' | 'cancelled';
+export type OrderDocument = HydratedDocument<Order>;
 
 @Schema({ timestamps: true })
 export class Order {
-  // 👉 Base fields
   @Prop()
-  orderId!: string;
+  orderId?: string;
 
-  // 👉 Customer info
+  @Prop({ required: true, unique: true, index: true })
+  orderNumber!: string;
+
   @Prop()
   customerName!: string;
 
@@ -17,9 +20,8 @@ export class Order {
   phoneNumber!: string;
 
   @Prop()
-  note!: string; // หมายเหตุรวมทั้งบิล
+  note!: string;
 
-  // 👉 Order summary
   @Prop({ required: true })
   total!: number;
 
@@ -33,13 +35,13 @@ export class Order {
   remainingTotal!: number;
 
   @Prop({ enum: ['cash', 'promptpay'], required: true })
-  payment!: 'cash' | 'promptpay';
+  payment!: PaymentMethod;
 
   @Prop({
     enum: ['pending', 'partial', 'paid', 'cancelled'],
     default: 'pending',
   })
-  status!: 'pending' | 'partial' | 'paid' | 'cancelled';
+  status!: OrderStatus;
 
   @Prop({ enum: ['yes', 'no'], default: 'no' })
   taxInvoice!: 'yes' | 'no';
@@ -60,48 +62,34 @@ export class Order {
     ],
     default: [],
   })
-  payments!: { amount: number; method: 'cash' | 'promptpay'; paidAt: Date }[];
+  payments!: { amount: number; method: PaymentMethod; paidAt: Date }[];
 
-  // 👉 รายการสินค้า (cart)
   @Prop({
     type: [
       {
-        name: String, // ชื่อสินค้า
-        category: String, // ประเภทสินค้า เช่น นามบัตร, ตรายาง
-
-        // --- นามบัตร ---
-        variant: Object, // ขนาด/กระดาษ
-        sides: String, // กี่ด้าน
-        material: String, // วัสดุ
-        colorMode: String, // โหมดสี
-
-        // --- ตรายาง ---
-        type: { type: String }, // normal | inked
-        shape: { type: String }, // circle | square
-        size: { type: String }, // ขนาดตรายาง
-
-        // --- โพสการ์ด ---
-        setCount: Number, // ✅ จำนวนชุด
-
-        // --- อิงค์เจ็ท ---
-        inkjetType: { type: String }, // เช่น paper-gloss, vinyl ฯลฯ
+        name: String,
+        category: String,
+        variant: Object,
+        sides: String,
+        material: String,
+        colorMode: String,
+        type: { type: String },
+        shape: { type: String },
+        size: { type: String },
+        setCount: Number,
+        inkjetType: { type: String },
         sizeFlex: [
           {
             height: String,
             width: String,
           },
         ],
-
-        // --- สติ๊กเกอร์ PVC ---
-
         stickerPVCType: String,
-
-        // --- ใช้ร่วมกัน ---
         qty: Number,
         unitPrice: Number,
         totalPrice: Number,
-        productNote: String, // รายละเอียดสินค้า
-        note: String, // หมายเหตุ
+        productNote: String,
+        note: String,
         deposit: Number,
         remaining: Number,
         fullPayment: Boolean,
@@ -111,26 +99,17 @@ export class Order {
   cart!: {
     name: string;
     category?: string;
-
-    // --- นามบัตร ---
-    variant?: Record<string, any>;
+    variant?: Record<string, unknown>;
     sides?: string;
     material?: string;
     colorMode?: string;
-
-    // --- ตรายาง ---
     type?: string;
     shape?: string;
     size?: string;
-
-    // --- โพสการ์ด ---
-    setCount?: number; // ✅ จำนวนชุด
-
-    // --- อิงค์เจ็ท ---
+    setCount?: number;
     inkjetType?: string;
     sizeFlex?: { height: string; width: string }[];
-
-    // --- ใช้ร่วมกัน ---
+    stickerPVCType?: string;
     qty: number;
     unitPrice: number;
     totalPrice: number;
@@ -143,3 +122,5 @@ export class Order {
 }
 
 export const OrderSchema = SchemaFactory.createForClass(Order);
+
+OrderSchema.index({ orderNumber: 1 }, { unique: true });

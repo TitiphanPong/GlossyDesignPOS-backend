@@ -4,8 +4,8 @@ import { OrdersController } from './orders.controller';
 import { OrdersService } from './orders.service';
 import { Order, OrderSchema } from './orders.schema';
 import { Counter, CounterSchema } from '../counters/counters.schema';
-import { CounterService } from '../counters/counter.service';
 import { OrdersSseService } from './orders.sse.service';
+import { RunningNumberService } from '../counters/running-number.service';
 
 @Module({
   imports: [
@@ -15,6 +15,6 @@ import { OrdersSseService } from './orders.sse.service';
     ]),
   ],
   controllers: [OrdersController],
-  providers: [OrdersService, CounterService, OrdersSseService],
+  providers: [OrdersService, RunningNumberService, OrdersSseService],
 })
 export class OrdersModule {}

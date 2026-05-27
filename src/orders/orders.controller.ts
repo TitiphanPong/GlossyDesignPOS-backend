@@ -3,6 +3,7 @@ import { Controller, Post, Body, Get, Param, Patch, Sse } from '@nestjs/common';
 import { Observable } from 'rxjs';
 import { OrdersService } from './orders.service';
 import { OrdersSseService } from './orders.sse.service';
+import { OrderResponseDto } from './dto/order-response.dto';
 import { Order } from './orders.schema';
 
 @Controller('orders')
@@ -13,7 +14,7 @@ export class OrdersController {
   ) {}
 
   @Post()
-  async create(@Body() order: Partial<Order>) {
+  async create(@Body() order: Partial<Order>): Promise<OrderResponseDto> {
     return this.ordersService.create(order);
   }
 
