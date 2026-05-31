@@ -1,13 +1,16 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   InternalServerErrorException,
+  NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { MongoServerError } from 'mongodb';
-import { Model } from 'mongoose';
+import { isValidObjectId, Model } from 'mongoose';
 import { RunningNumberService } from '../counters/running-number.service';
 import { OrderResponseDto } from './dto/order-response.dto';
+import { UpdateOrderCustomerDto } from './dto/update-order-customer.dto';
 import {
   Order,
   OrderDocument,
@@ -266,6 +269,27 @@ export class OrdersService {
     return response;
   }
 
+  async updateCustomerInfo(
+    id: string,
+    updateDto: UpdateOrderCustomerDto,
+  ): Promise<OrderResponseDto> {
+    if (!isValidObjectId(id)) {
+      throw new BadRequestException('Invalid order id.');
+    }
+
+    const update = this.buildCustomerInfoUpdate(updateDto);
+
+    const updated = await this.orderModel
+      .findByIdAndUpdate(id, update, { new: true, runValidators: true })
+      .exec();
+
+    if (!updated) {
+      throw new NotFoundException(`Order not found for id "${id}".`);
+    }
+
+    return this.toOrderResponse(updated);
+  }
+
   private isDuplicateOrderNumberError(error: unknown): boolean {
     if (!this.isDuplicateKeyError(error)) {
       return false;
@@ -298,8 +322,66 @@ export class OrdersService {
     return Boolean(keyPattern?.clientDraftId);
   }
 
+  private buildCustomerInfoUpdate(
+    updateDto: UpdateOrderCustomerDto,
+  ): Partial<Order> {
+    const update: Partial<Order> = {};
+
+    if (updateDto.customerName !== undefined) {
+      update.customerName = updateDto.customerName;
+    }
+
+    const taxId = this.resolveMirroredField(
+      'taxId',
+      updateDto.taxId,
+      updateDto.customerTaxId,
+    );
+    if (taxId !== undefined) {
+      update.taxId = taxId;
+      update.customerTaxId = taxId;
+    }
+
+    const address = this.resolveMirroredField(
+      'address',
+      updateDto.address,
+      updateDto.customerAddress,
+    );
+    if (address !== undefined) {
+      update.address = address;
+      update.customerAddress = address;
+    }
+
+    if (Object.keys(update).length === 0) {
+      throw new BadRequestException(
+        'At least one customer field must be provided.',
+      );
+    }
+
+    return update;
+  }
+
+  private resolveMirroredField(
+    fieldName: 'taxId' | 'address',
+    primaryValue?: string,
+    legacyValue?: string,
+  ): string | undefined {
+    if (primaryValue !== undefined && legacyValue !== undefined) {
+      if (primaryValue !== legacyValue) {
+        throw new BadRequestException(
+          `"${fieldName}" and legacy alias must match when both are provided.`,
+        );
+      }
+
+      return primaryValue;
+    }
+
+    return primaryValue ?? legacyValue;
+  }
+
   private toOrderResponse(order: OrderDocument): OrderResponseDto {
     const plain = order.toObject() as OrderPlainObject;
+    const resolvedAddress = plain.address ?? plain.customerAddress;
+    const resolvedTaxId = plain.taxId ?? plain.customerTaxId;
 
     return {
       _id: order._id.toString(),
@@ -309,8 +391,10 @@ export class OrdersService {
       customerName: plain.customerName,
       phoneNumber: plain.phoneNumber,
       email: plain.email,
-      address: plain.address,
-      taxId: plain.taxId,
+      address: resolvedAddress,
+      customerAddress: plain.customerAddress ?? resolvedAddress,
+      taxId: resolvedTaxId,
+      customerTaxId: plain.customerTaxId ?? resolvedTaxId,
       branch: plain.branch,
       note: plain.note,
       salesChannel: plain.salesChannel,

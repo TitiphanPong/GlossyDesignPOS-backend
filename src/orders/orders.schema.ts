@@ -29,7 +29,13 @@ export class Order {
   address?: string;
 
   @Prop()
+  customerAddress?: string;
+
+  @Prop()
   taxId?: string;
+
+  @Prop()
+  customerTaxId?: string;
 
   @Prop()
   branch?: string;

@@ -14,6 +14,7 @@ import { OrdersService } from './orders.service';
 import { OrdersSseService } from './orders.sse.service';
 import { OrderResponseDto } from './dto/order-response.dto';
 import { Order } from './orders.schema';
+import { UpdateOrderCustomerDto } from './dto/update-order-customer.dto';
 
 @Controller('orders')
 export class OrdersController {
@@ -69,6 +70,14 @@ export class OrdersController {
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.ordersService.findById(id);
+  }
+
+  @Patch(':id')
+  async updateCustomerInfo(
+    @Param('id') id: string,
+    @Body() body: UpdateOrderCustomerDto,
+  ): Promise<OrderResponseDto> {
+    return this.ordersService.updateCustomerInfo(id, body);
   }
 
   @Patch(':id/payments')

@@ -39,7 +39,9 @@ export class OrderResponseDto {
   phoneNumber!: string;
   email?: string;
   address?: string;
+  customerAddress?: string;
   taxId?: string;
+  customerTaxId?: string;
   branch?: string;
   note!: string;
   salesChannel?: string;
