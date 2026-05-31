@@ -5,11 +5,12 @@ import { randomInt, randomUUID } from 'node:crypto';
 import dayjs from 'dayjs';
 import { CreateUploadDto } from './dto/create-upload.dto';
 import { UploadResponseDto } from './dto/upload-response.dto';
-import { Upload, UploadDocument, UploadStatus } from './schemas/upload.schema';
+import { Upload, UploadDocument } from './schemas/upload.schema';
 import { S3Service } from './s3/s3.service';
 import { sanitizeFilename } from './validators/upload-file.validator';
 import { ListUploadsQueryDto } from './dto/list-uploads-query.dto';
 import { UpdateUploadDto } from './dto/update-upload.dto';
+import { UploadStatus } from './uploads.enums';
 
 const REGEX_SPECIAL_CHARS = /[.*+?^${}()|[\]\\]/g;
 
@@ -42,12 +43,7 @@ export class UploadsService {
         body: file.buffer,
         contentType: file.mimetype,
         contentLength: file.size,
-        metadata: {
-          // S3 metadata is transmitted via HTTP headers; keep values ASCII-safe.
-          customername: this.toAsciiMetadata(dto.customerName),
-          phonemasked: this.maskPhone(dto.phone),
-          jobtype: dto.jobType,
-        },
+        metadata: this.buildUploadMetadata(dto),
       });
 
       uploadedFiles.push({
@@ -65,16 +61,46 @@ export class UploadsService {
       customerName: dto.customerName,
       phone: dto.phone,
       note: dto.note,
+      statusNote: dto.statusNote,
+      batchId: dto.batchId,
+      stage: dto.stage,
       jobType: dto.jobType,
       status: UploadStatus.PENDING,
       files: uploadedFiles,
     });
 
+    const firstFile = uploadedFiles[0];
+
     return {
+      id: uploadId,
       uploadId,
       orderCode,
+      originalName: firstFile?.originalName ?? '',
+      size: firstFile?.size ?? 0,
+      mimeType: firstFile?.mimeType ?? 'application/octet-stream',
+      createdAt: now.toISOString(),
       message: 'Upload success',
     };
+  }
+
+  async getSignedUrlById(
+    id: string,
+  ): Promise<{ signedUrl: string; expiresIn: number } | null> {
+    const selector: FilterQuery<UploadDocument> = isValidObjectId(id)
+      ? { $or: [{ uploadId: id }, { _id: id }] }
+      : { uploadId: id };
+    const row = await this.uploadModel.findOne(selector).lean();
+    const firstFile = row?.files?.[0];
+    if (!firstFile) {
+      return null;
+    }
+
+    const expiresIn = 300;
+    const signedUrl = await this.s3Service.createSignedDownloadUrl(
+      firstFile.s3Key,
+      expiresIn,
+    );
+    return { signedUrl, expiresIn };
   }
 
   private generateOrderCode(): string {
@@ -93,6 +119,23 @@ export class UploadsService {
 
   private toAsciiMetadata(value: string): string {
     return Buffer.from(value, 'utf8').toString('base64url');
+  }
+
+  private buildUploadMetadata(dto: CreateUploadDto): Record<string, string> {
+    const metadata: Record<string, string> = {
+      jobtype: dto.jobType,
+    };
+
+    if (dto.customerName?.trim()) {
+      // S3 metadata is transmitted via HTTP headers; keep values ASCII-safe.
+      metadata.customername = this.toAsciiMetadata(dto.customerName.trim());
+    }
+
+    if (dto.phone?.trim()) {
+      metadata.phonemasked = this.maskPhone(dto.phone.trim());
+    }
+
+    return metadata;
   }
 
   async listUploads(query: ListUploadsQueryDto): Promise<{
@@ -168,9 +211,12 @@ export class UploadsService {
     const doc = row as {
       _id: unknown;
       uploadId: string;
-      customerName: string;
-      phone: string;
+      customerName?: string;
+      phone?: string;
       note?: string;
+      statusNote?: string;
+      batchId?: string;
+      stage?: string;
       jobType: string;
       status: string;
       createdAt: Date;
@@ -201,9 +247,12 @@ export class UploadsService {
     return {
       id: String(doc._id),
       uploadId: doc.uploadId,
-      customerName: doc.customerName,
-      phone: doc.phone,
+      customerName: doc.customerName ?? '',
+      phone: doc.phone ?? '',
       note: doc.note ?? '',
+      statusNote: doc.statusNote ?? '',
+      batchId: doc.batchId ?? null,
+      stage: doc.stage ?? null,
       category: doc.jobType,
       jobType: doc.jobType,
       status: doc.status,

@@ -1,6 +1,13 @@
-import { IsEnum, IsOptional, IsString, Matches, MaxLength, MinLength } from 'class-validator';
-import { JobType } from './create-upload.dto';
-import { UploadStatus } from '../schemas/upload.schema';
+import {
+  IsEnum,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Matches,
+  MaxLength,
+  MinLength,
+} from 'class-validator';
+import { JobType, UploadStage, UploadStatus } from '../uploads.enums';
 
 export class UpdateUploadDto {
   @IsOptional()
@@ -19,6 +26,19 @@ export class UpdateUploadDto {
   @IsString()
   @MaxLength(1000)
   note?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  statusNote?: string;
+
+  @IsOptional()
+  @IsUUID()
+  batchId?: string;
+
+  @IsOptional()
+  @IsEnum(UploadStage)
+  stage?: UploadStage;
 
   @IsOptional()
   @IsEnum(JobType)

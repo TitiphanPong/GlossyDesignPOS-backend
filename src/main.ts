@@ -14,7 +14,7 @@ async function bootstrap() {
       ? frontendOrigin.split(',').map((x) => x.trim())
       : false,
     methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key'],
   });
 
   app.use(helmet());

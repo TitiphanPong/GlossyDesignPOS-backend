@@ -32,11 +32,17 @@ type OrderCartItemDto = {
 
 export class OrderResponseDto {
   _id!: string;
+  clientDraftId?: string;
   orderId!: string;
-  orderNumber!: string;
+  orderNumber?: string;
   customerName!: string;
   phoneNumber!: string;
+  email?: string;
+  address?: string;
+  taxId?: string;
+  branch?: string;
   note!: string;
+  salesChannel?: string;
   total!: number;
   discount!: number;
   depositTotal!: number;

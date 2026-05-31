@@ -7,11 +7,14 @@ export type OrderDocument = HydratedDocument<Order>;
 
 @Schema({ timestamps: true })
 export class Order {
+  @Prop({ unique: true, sparse: true, index: true })
+  clientDraftId?: string;
+
   @Prop()
   orderId?: string;
 
-  @Prop({ required: true, unique: true, index: true })
-  orderNumber!: string;
+  @Prop({ unique: true, sparse: true, index: true })
+  orderNumber?: string;
 
   @Prop()
   customerName!: string;
@@ -20,7 +23,22 @@ export class Order {
   phoneNumber!: string;
 
   @Prop()
+  email?: string;
+
+  @Prop()
+  address?: string;
+
+  @Prop()
+  taxId?: string;
+
+  @Prop()
+  branch?: string;
+
+  @Prop()
   note!: string;
+
+  @Prop()
+  salesChannel?: string;
 
   @Prop({ required: true })
   total!: number;
@@ -123,4 +141,5 @@ export class Order {
 
 export const OrderSchema = SchemaFactory.createForClass(Order);
 
-OrderSchema.index({ orderNumber: 1 }, { unique: true });
+OrderSchema.index({ orderNumber: 1 }, { unique: true, sparse: true });
+OrderSchema.index({ clientDraftId: 1 }, { unique: true, sparse: true });

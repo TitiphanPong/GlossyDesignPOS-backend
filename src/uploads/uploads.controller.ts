@@ -57,6 +57,15 @@ export class UploadsController {
     return this.uploadsService.createUpload(dto, files);
   }
 
+  @Get(':id/signed-url')
+  async getSignedUrl(@Param('id') id: string) {
+    const signed = await this.uploadsService.getSignedUrlById(id);
+    if (!signed) {
+      throw new NotFoundException('Upload not found');
+    }
+    return signed;
+  }
+
   @Patch(':id')
   async updateUpload(@Param('id') id: string, @Body() dto: UpdateUploadDto) {
     const updated = await this.uploadsService.updateUploadById(id, dto);

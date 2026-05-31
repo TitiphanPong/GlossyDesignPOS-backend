@@ -1,5 +1,10 @@
 export class UploadResponseDto {
-  uploadId: string;
-  orderCode: string;
-  message: string;
+  id!: string;
+  uploadId!: string;
+  orderCode!: string;
+  originalName!: string;
+  size!: number;
+  mimeType!: string;
+  createdAt!: string;
+  message!: string;
 }

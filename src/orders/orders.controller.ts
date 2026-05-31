@@ -1,5 +1,14 @@
 // src/orders/orders.controller.ts
-import { Controller, Post, Body, Get, Param, Patch, Sse } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Headers,
+  Param,
+  Patch,
+  Post,
+  Sse,
+} from '@nestjs/common';
 import { Observable } from 'rxjs';
 import { OrdersService } from './orders.service';
 import { OrdersSseService } from './orders.sse.service';
@@ -14,8 +23,11 @@ export class OrdersController {
   ) {}
 
   @Post()
-  async create(@Body() order: Partial<Order>): Promise<OrderResponseDto> {
-    return this.ordersService.create(order);
+  async create(
+    @Body() order: Partial<Order>,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ): Promise<OrderResponseDto> {
+    return this.ordersService.create(order, idempotencyKey);
   }
 
   @Get()

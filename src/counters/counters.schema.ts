@@ -14,8 +14,8 @@ export class Counter {
   @Prop({ required: true, enum: [COUNTER_TYPE_ORDER] })
   type!: CounterType;
 
-  @Prop({ required: true, match: /^\d{8}$/ })
-  date!: string;
+  @Prop({ required: true, min: 2000 })
+  year!: number;
 
   @Prop({ required: true, default: 0, min: 0 })
   seq!: number;
@@ -23,4 +23,4 @@ export class Counter {
 
 export const CounterSchema = SchemaFactory.createForClass(Counter);
 
-CounterSchema.index({ type: 1, date: 1 }, { unique: true });
+CounterSchema.index({ type: 1, year: 1 }, { unique: true });

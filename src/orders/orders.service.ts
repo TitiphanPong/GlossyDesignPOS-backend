@@ -31,7 +31,21 @@ export class OrdersService {
     private readonly ordersSse: OrdersSseService,
   ) {}
 
-  async create(orderDto: Partial<Order>): Promise<OrderResponseDto> {
+  async create(
+    orderDto: Partial<Order>,
+    idempotencyKey?: string,
+  ): Promise<OrderResponseDto> {
+    const normalizedDraftId =
+      idempotencyKey?.trim() || orderDto.clientDraftId?.trim();
+    if (normalizedDraftId) {
+      const existing = await this.orderModel
+        .findOne({ clientDraftId: normalizedDraftId })
+        .exec();
+      if (existing) {
+        return this.toOrderResponse(existing);
+      }
+    }
+
     const maxAttempts = 3;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -40,6 +54,7 @@ export class OrdersService {
           await this.runningNumberService.generateOrderNumber();
         const createdOrder = new this.orderModel({
           ...orderDto,
+          ...(normalizedDraftId ? { clientDraftId: normalizedDraftId } : {}),
           orderNumber,
           status: orderDto.status ?? 'pending',
         });
@@ -62,6 +77,15 @@ export class OrdersService {
         }
 
         if (this.isDuplicateKeyError(error)) {
+          if (normalizedDraftId && this.isDuplicateClientDraftIdError(error)) {
+            const existing = await this.orderModel
+              .findOne({ clientDraftId: normalizedDraftId })
+              .exec();
+            if (existing) {
+              return this.toOrderResponse(existing);
+            }
+          }
+
           throw new ConflictException(
             'Duplicate value violates a unique index.',
           );
@@ -74,39 +98,45 @@ export class OrdersService {
     throw new InternalServerErrorException('Failed to create order.');
   }
 
-  async findAll(): Promise<Order[]> {
-    return this.orderModel.find().sort({ createdAt: -1 }).lean().exec();
+  async findAll(): Promise<OrderResponseDto[]> {
+    const orders = await this.orderModel.find().sort({ createdAt: -1 }).exec();
+    return orders.map((order) => this.toOrderResponse(order));
   }
 
-  async findById(id: string): Promise<Order | null> {
-    return this.orderModel.findById(id).lean().exec();
+  async findById(id: string): Promise<OrderResponseDto | null> {
+    const order = await this.orderModel.findById(id).exec();
+    return order ? this.toOrderResponse(order) : null;
   }
 
-  async findLatestActive(): Promise<Order | null> {
-    return this.orderModel
+  async findLatestActive(): Promise<OrderResponseDto | null> {
+    const order = await this.orderModel
       .findOne({ status: { $in: ['pending', 'paid'] } })
       .sort({ updatedAt: -1 })
-      .lean()
       .exec();
+    return order ? this.toOrderResponse(order) : null;
   }
 
-  async updateStatus(id: string, status: OrderStatus) {
+  async updateStatus(
+    id: string,
+    status: OrderStatus,
+  ): Promise<OrderResponseDto | null> {
     const updated = await this.orderModel
       .findByIdAndUpdate(id, { status }, { new: true })
-      .lean()
       .exec();
 
     if (!updated) return null;
 
+    const response = this.toOrderResponse(updated);
+
     if (status === 'pending' || status === 'partial') {
-      this.ordersSse.emitOrder(updated);
+      this.ordersSse.emitOrder(response);
     } else if (status === 'paid') {
-      this.ordersSse.emitOrderAndAutoClear(updated, 7000);
+      this.ordersSse.emitOrderAndAutoClear(response, 7000);
     } else if (status === 'cancelled') {
       this.ordersSse.emitOrder(null);
     }
 
-    return updated;
+    return response;
   }
 
   async getSummary() {
@@ -198,15 +228,20 @@ export class OrdersService {
     };
   }
 
-  async findByOrderId(orderNumber: string) {
-    return this.orderModel
+  async findByOrderId(orderNumber: string): Promise<OrderResponseDto | null> {
+    const order = await this.orderModel
       .findOne({
         $or: [{ orderNumber }, { orderId: orderNumber }],
       })
       .exec();
+    return order ? this.toOrderResponse(order) : null;
   }
 
-  async addPayment(id: string, amount: number, method: PaymentMethod) {
+  async addPayment(
+    id: string,
+    amount: number,
+    method: PaymentMethod,
+  ): Promise<OrderResponseDto> {
     const order = await this.orderModel.findById(id);
     if (!order) throw new Error('Order not found');
 
@@ -220,14 +255,15 @@ export class OrdersService {
     order.status = order.remainingTotal === 0 ? 'paid' : 'partial';
 
     const updated = await order.save();
+    const response = this.toOrderResponse(updated);
 
     if (order.status === 'paid') {
-      this.ordersSse.emitOrderAndAutoClear(updated.toObject(), 7000);
+      this.ordersSse.emitOrderAndAutoClear(response, 7000);
     } else {
-      this.ordersSse.emitOrder(updated.toObject());
+      this.ordersSse.emitOrder(response);
     }
 
-    return updated;
+    return response;
   }
 
   private isDuplicateOrderNumberError(error: unknown): boolean {
@@ -248,16 +284,36 @@ export class OrdersService {
     return error instanceof MongoServerError && error.code === 11000;
   }
 
+  private isDuplicateClientDraftIdError(error: unknown): boolean {
+    if (!this.isDuplicateKeyError(error)) {
+      return false;
+    }
+
+    const keyPattern = (
+      error as MongoServerError & {
+        keyPattern?: Record<string, unknown>;
+      }
+    ).keyPattern;
+
+    return Boolean(keyPattern?.clientDraftId);
+  }
+
   private toOrderResponse(order: OrderDocument): OrderResponseDto {
     const plain = order.toObject() as OrderPlainObject;
 
     return {
       _id: order._id.toString(),
+      clientDraftId: plain.clientDraftId,
       orderId: plain.orderId ?? order._id.toString(),
       orderNumber: plain.orderNumber,
       customerName: plain.customerName,
       phoneNumber: plain.phoneNumber,
+      email: plain.email,
+      address: plain.address,
+      taxId: plain.taxId,
+      branch: plain.branch,
       note: plain.note,
+      salesChannel: plain.salesChannel,
       total: plain.total,
       discount: plain.discount,
       depositTotal: plain.depositTotal,

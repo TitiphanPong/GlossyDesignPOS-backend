@@ -5,11 +5,25 @@ import request from 'supertest';
 import { UploadsController } from '../src/uploads/uploads.controller';
 import { UploadsService } from '../src/uploads/uploads.service';
 import { HttpExceptionFilter } from '../src/common/filters/http-exception.filter';
-import { JobType } from '../src/uploads/dto/create-upload.dto';
+import { JobType, UploadStage } from '../src/uploads/uploads.enums';
 
 describe('UploadsController (e2e)', () => {
   let app: INestApplication;
   let server: Parameters<typeof request>[0];
+  const createUpload = jest.fn().mockResolvedValue({
+    id: 'mock-upload-id',
+    uploadId: 'mock-upload-id',
+    orderCode: 'GL-20260515-1234',
+    originalName: 'sample.pdf',
+    size: 16,
+    mimeType: 'application/pdf',
+    createdAt: '2026-05-31T00:00:00.000Z',
+    message: 'Upload success',
+  });
+  const getSignedUrlById = jest.fn().mockResolvedValue({
+    signedUrl: 'https://example.com/mock-signed-url',
+    expiresIn: 300,
+  });
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -18,11 +32,8 @@ describe('UploadsController (e2e)', () => {
         {
           provide: UploadsService,
           useValue: {
-            createUpload: jest.fn().mockResolvedValue({
-              uploadId: 'mock-upload-id',
-              orderCode: 'GL-20260515-1234',
-              message: 'Upload success',
-            }),
+            createUpload,
+            getSignedUrlById,
           },
         },
       ],
@@ -45,19 +56,52 @@ describe('UploadsController (e2e)', () => {
     await app.close();
   });
 
+  beforeEach(() => {
+    createUpload.mockClear();
+    getSignedUrlById.mockClear();
+  });
+
   it('POST /uploads success upload', async () => {
     await request(server)
       .post('/uploads')
-      .field('customerName', 'Alice')
-      .field('phone', '0812345678')
+      .field('customerName', 'Upload Customer')
+      .field('phone', '0000000000')
       .field('jobType', JobType.DOCUMENT_PRINTING)
+      .field(
+        'note',
+        '[[batch:4d6b9e89-52f6-4614-aa35-fc764f29f8cb]] [[stage:waiting-download]]',
+      )
+      .field('statusNote', 'Ready for pickup after download')
+      .field('batchId', '4d6b9e89-52f6-4614-aa35-fc764f29f8cb')
+      .field('stage', UploadStage.WAITING_DOWNLOAD)
       .attach('files', Buffer.from('fake pdf content'), 'sample.pdf')
       .expect(201)
       .expect({
+        id: 'mock-upload-id',
         uploadId: 'mock-upload-id',
         orderCode: 'GL-20260515-1234',
+        originalName: 'sample.pdf',
+        size: 16,
+        mimeType: 'application/pdf',
+        createdAt: '2026-05-31T00:00:00.000Z',
         message: 'Upload success',
       });
+
+    expect(createUpload).toHaveBeenCalledWith(
+      expect.objectContaining({
+        customerName: 'Upload Customer',
+        phone: '0000000000',
+        jobType: JobType.DOCUMENT_PRINTING,
+        note: [
+          '[[batch:4d6b9e89-52f6-4614-aa35-fc764f29f8cb]]',
+          '[[stage:waiting-download]]',
+        ].join(' '),
+        statusNote: 'Ready for pickup after download',
+        batchId: '4d6b9e89-52f6-4614-aa35-fc764f29f8cb',
+        stage: UploadStage.WAITING_DOWNLOAD,
+      }),
+      expect.any(Array),
+    );
   });
 
   it('POST /uploads invalid type', async () => {
@@ -88,15 +132,25 @@ describe('UploadsController (e2e)', () => {
       });
   });
 
-  it('POST /uploads missing required field', async () => {
+  it('GET /uploads/:id/signed-url returns signed url', async () => {
+    await request(server)
+      .get('/uploads/mock-upload-id/signed-url')
+      .expect(200)
+      .expect({
+        signedUrl: 'https://example.com/mock-signed-url',
+        expiresIn: 300,
+      });
+
+    expect(getSignedUrlById).toHaveBeenCalledWith('mock-upload-id');
+  });
+
+  it('POST /uploads missing files', async () => {
     await request(server)
       .post('/uploads')
-      .field('customerName', 'Alice')
       .field('jobType', JobType.DOCUMENT_PRINTING)
-      .attach('files', Buffer.from('fake pdf content'), 'sample.pdf')
       .expect(400)
-      .expect(({ body }: { body: { message: string | string[] } }) => {
-        expect(Array.isArray(body.message)).toBe(true);
+      .expect(({ body }: { body: { message: string } }) => {
+        expect(body.message).toContain('At least one file is required');
       });
   });
 });

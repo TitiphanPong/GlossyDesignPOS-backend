@@ -15,12 +15,12 @@ export class RunningNumberService {
   ) {}
 
   async generateOrderNumber(now: Date = new Date()): Promise<string> {
-    const date = this.formatDate(now);
+    const year = this.getYear(now);
     const counter = await this.counterModel.findOneAndUpdate(
-      { type: COUNTER_TYPE_ORDER, date },
+      { type: COUNTER_TYPE_ORDER, year },
       {
         $inc: { seq: 1 },
-        $setOnInsert: { type: COUNTER_TYPE_ORDER, date },
+        $setOnInsert: { type: COUNTER_TYPE_ORDER, year },
       },
       {
         new: true,
@@ -34,28 +34,24 @@ export class RunningNumberService {
       );
     }
 
-    return `ORD-${date}-${counter.seq.toString().padStart(4, '0')}`;
+    return `GD-${year}-${counter.seq.toString().padStart(6, '0')}`;
   }
 
-  private formatDate(date: Date): string {
+  private getYear(date: Date): number {
     const formatter = new Intl.DateTimeFormat('en-US', {
       timeZone: process.env.ORDER_NUMBER_TIMEZONE ?? 'Asia/Bangkok',
       year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
     });
 
     const parts = formatter.formatToParts(date);
     const year = parts.find((part) => part.type === 'year')?.value;
-    const month = parts.find((part) => part.type === 'month')?.value;
-    const day = parts.find((part) => part.type === 'day')?.value;
 
-    if (!year || !month || !day) {
+    if (!year) {
       throw new InternalServerErrorException(
-        'Failed to format order number date.',
+        'Failed to format order number year.',
       );
     }
 
-    return `${year}${month}${day}`;
+    return Number(year);
   }
 }

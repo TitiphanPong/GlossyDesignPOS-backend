@@ -1,42 +1,45 @@
 import {
   IsEnum,
-  IsNotEmpty,
   IsOptional,
   IsString,
+  IsUUID,
   Matches,
   MaxLength,
   MinLength,
 } from 'class-validator';
-
-export enum JobType {
-  DOCUMENT_PRINTING = 'Document Printing',
-  PHOTOCOPY = 'Photocopy',
-  STICKER = 'Sticker',
-  BUSINESS_CARD = 'Business Card',
-  POSTER = 'Poster',
-  VINYL_BANNER = 'Vinyl Banner',
-  PACKAGING = 'Packaging',
-  OTHER = 'Other',
-}
+import { JobType, UploadStage } from '../uploads.enums';
 
 export class CreateUploadDto {
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
   @MaxLength(120)
-  customerName: string;
+  customerName?: string;
 
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
   @Matches(/^\d+$/, { message: 'phone must contain digits only' })
   @MinLength(9)
   @MaxLength(20)
-  phone: string;
+  phone?: string;
 
   @IsOptional()
   @IsString()
   @MaxLength(1000)
   note?: string;
 
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  statusNote?: string;
+
+  @IsOptional()
+  @IsUUID()
+  batchId?: string;
+
+  @IsOptional()
+  @IsEnum(UploadStage)
+  stage?: UploadStage;
+
   @IsEnum(JobType)
-  jobType: JobType;
+  jobType: JobType = JobType.OTHER;
 }

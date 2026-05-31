@@ -1,6 +1,6 @@
 import { IsEnum, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
 import { Type } from 'class-transformer';
-import { UploadStatus } from '../schemas/upload.schema';
+import { UploadStatus } from '../uploads.enums';
 
 export class ListUploadsQueryDto {
   @IsOptional()
