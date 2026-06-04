@@ -27,6 +27,8 @@ type OrderPlainObject = Order & {
   updatedAt?: Date;
 };
 
+const REGEX_SPECIAL_CHARS = /[.*+?^${}()|[\]\\]/g;
+
 @Injectable()
 export class OrdersService {
   constructor(
@@ -136,6 +138,7 @@ export class OrdersService {
   }
 
   async findById(id: string): Promise<OrderResponseDto | null> {
+    this.assertMongoObjectId(id, 'order id');
     const order = await this.orderModel.findById(id).exec();
     return order ? this.toOrderResponse(order) : null;
   }
@@ -165,10 +168,15 @@ export class OrdersService {
     if (!q) {
       throw new BadRequestException('q is required.');
     }
+    const pattern = this.toSafePartialRegex(q);
 
     const rows = await this.orderModel
       .find({
-        $or: [{ orderNumber: q }, { orderId: q }, { phoneNumber: q }],
+        $or: [
+          { orderNumber: { $regex: pattern, $options: 'i' } },
+          { orderId: { $regex: pattern, $options: 'i' } },
+          { phoneNumber: { $regex: pattern, $options: 'i' } },
+        ],
       })
       .sort({ createdAt: -1 })
       .limit(10)
@@ -182,6 +190,7 @@ export class OrdersService {
     status: OrderStatus,
     statusNote?: string,
   ): Promise<OrderResponseDto | null> {
+    this.assertMongoObjectId(id, 'order id');
     const updated = await this.orderModel
       .findByIdAndUpdate(
         id,
@@ -212,6 +221,7 @@ export class OrdersService {
     id: string,
     updateDto: UpdateOrderCustomerDto,
   ): Promise<OrderResponseDto> {
+    this.assertMongoObjectId(id, 'order id');
     const { status, statusNote, ...customerFields } = updateDto;
     const hasCustomerFields = Object.values(customerFields).some(
       (value) => value !== undefined,
@@ -223,10 +233,6 @@ export class OrdersService {
         throw new NotFoundException(`Order not found for id "${id}".`);
       }
       return updated;
-    }
-
-    if (!isValidObjectId(id)) {
-      throw new BadRequestException('Invalid order id.');
     }
 
     const update: Partial<Order> = hasCustomerFields
@@ -373,6 +379,7 @@ export class OrdersService {
     method: PaymentMethod,
     note?: string,
   ): Promise<OrderResponseDto> {
+    this.assertMongoObjectId(id, 'order id');
     const order = await this.orderModel.findById(id);
     if (!order) throw new NotFoundException('Order not found');
 
@@ -420,22 +427,37 @@ export class OrdersService {
   async searchTracking(query: {
     orderNumber?: string;
     phone?: string;
+    q?: string;
   }): Promise<{ data: Record<string, unknown>[]; total: number }> {
     const filter: Record<string, unknown> = {};
     const or: Record<string, unknown>[] = [];
+    if (query.q?.trim()) {
+      const pattern = this.toSafePartialRegex(query.q);
+      or.push(
+        { orderNumber: { $regex: pattern, $options: 'i' } },
+        { orderId: { $regex: pattern, $options: 'i' } },
+        { phoneNumber: { $regex: pattern, $options: 'i' } },
+      );
+    }
     if (query.orderNumber?.trim()) {
-      const value = query.orderNumber.trim();
-      or.push({ orderNumber: value }, { orderId: value });
+      const pattern = this.toSafePartialRegex(query.orderNumber);
+      or.push(
+        { orderNumber: { $regex: pattern, $options: 'i' } },
+        { orderId: { $regex: pattern, $options: 'i' } },
+      );
     }
     if (query.phone?.trim()) {
-      filter.phoneNumber = query.phone.trim();
+      filter.phoneNumber = {
+        $regex: this.toSafePartialRegex(query.phone),
+        $options: 'i',
+      };
     }
     if (or.length) {
       filter.$or = or;
     }
 
     if (!Object.keys(filter).length) {
-      throw new BadRequestException('orderNumber or phone is required.');
+      throw new BadRequestException('q, orderNumber, or phone is required.');
     }
 
     const rows = await this.orderModel
@@ -451,9 +473,7 @@ export class OrdersService {
     id: string,
     updateDto: UpdateOrderCustomerDto,
   ): Promise<OrderResponseDto> {
-    if (!isValidObjectId(id)) {
-      throw new BadRequestException('Invalid order id.');
-    }
+    this.assertMongoObjectId(id, 'order id');
 
     const update = this.buildCustomerInfoUpdate(updateDto);
 
@@ -466,6 +486,16 @@ export class OrdersService {
     }
 
     return this.toOrderResponse(updated);
+  }
+
+  private assertMongoObjectId(value: string, label: string): void {
+    if (!isValidObjectId(value)) {
+      throw new BadRequestException(`Invalid ${label}.`);
+    }
+  }
+
+  private toSafePartialRegex(value: string): string {
+    return value.trim().replace(REGEX_SPECIAL_CHARS, String.raw`\$&`);
   }
 
   private isDuplicateOrderNumberError(error: unknown): boolean {
@@ -509,6 +539,20 @@ export class OrdersService {
       update.customerName = updateDto.customerName;
     }
 
+    if (updateDto.companyName !== undefined) {
+      update.companyName = updateDto.companyName;
+    }
+
+    const email = this.resolveMirroredField(
+      'email',
+      updateDto.email,
+      updateDto.customerEmail,
+    );
+    if (email !== undefined) {
+      update.email = email;
+      update.customerEmail = email;
+    }
+
     const taxId = this.resolveMirroredField(
       'taxId',
       updateDto.taxId,
@@ -529,6 +573,38 @@ export class OrdersService {
       update.customerAddress = address;
     }
 
+    const branch = this.resolveMirroredField(
+      'branch',
+      updateDto.branch,
+      updateDto.customerBranch,
+    );
+    if (branch !== undefined) {
+      update.branch = branch;
+      update.customerBranch = branch;
+    }
+
+    if (updateDto.branchType !== undefined) {
+      update.branchType = updateDto.branchType;
+    }
+    if (updateDto.branchNo !== undefined) {
+      update.branchNo = updateDto.branchNo;
+    }
+    if (updateDto.subDistrict !== undefined) {
+      update.subDistrict = updateDto.subDistrict;
+    }
+    if (updateDto.district !== undefined) {
+      update.district = updateDto.district;
+    }
+    if (updateDto.province !== undefined) {
+      update.province = updateDto.province;
+    }
+    if (updateDto.postalCode !== undefined) {
+      update.postalCode = updateDto.postalCode;
+    }
+    if (updateDto.shippingAddress !== undefined) {
+      update.shippingAddress = updateDto.shippingAddress;
+    }
+
     if (Object.keys(update).length === 0) {
       throw new BadRequestException(
         'At least one customer field must be provided.',
@@ -539,7 +615,7 @@ export class OrdersService {
   }
 
   private resolveMirroredField(
-    fieldName: 'taxId' | 'address',
+    fieldName: 'taxId' | 'address' | 'email' | 'branch',
     primaryValue?: string,
     legacyValue?: string,
   ): string | undefined {
@@ -561,7 +637,7 @@ export class OrdersService {
       const qty = Number(item.qty ?? item.quantity);
       const unitPrice = Number(item.unitPrice ?? item.price);
       const totalPrice = Number(
-        item.totalPrice ?? item.total ?? qty * unitPrice,
+        item.totalPrice ?? item.lineTotal ?? item.total ?? qty * unitPrice,
       );
 
       if (!Number.isFinite(qty) || qty <= 0) {
@@ -583,6 +659,7 @@ export class OrdersService {
         qty,
         unitPrice,
         totalPrice,
+        lineTotal: item.lineTotal ?? totalPrice,
       };
     });
 
@@ -597,7 +674,10 @@ export class OrdersService {
       orderDto.total ??
       cart.reduce((sum, item) => sum + item.totalPrice, 0);
     const discount = orderDto.discount ?? 0;
-    const grandTotal = orderDto.grandTotal ?? Math.max(0, subtotal - discount);
+    const taxInvoice = orderDto.taxInvoice ?? 'no';
+    const vatAmount = orderDto.vatAmount ?? 0;
+    const grandTotal =
+      orderDto.grandTotal ?? Math.max(0, subtotal - discount) + vatAmount;
     const paidAmount = orderDto.paidAmount ?? orderDto.depositTotal ?? 0;
     const remainingTotal =
       orderDto.remainingTotal ?? Math.max(0, grandTotal - paidAmount);
@@ -609,6 +689,7 @@ export class OrdersService {
       grandTotal,
       paidAmount,
       remainingTotal,
+      vatAmount,
     })) {
       if (!Number.isFinite(value) || value < 0) {
         throw new BadRequestException(`${field} must be 0 or more.`);
@@ -617,8 +698,18 @@ export class OrdersService {
 
     return {
       ...orderDto,
+      orderId: undefined,
+      orderNumber: undefined,
       customerName: orderDto.customerName ?? '',
       phoneNumber: orderDto.phoneNumber ?? orderDto.phone ?? '',
+      email: orderDto.email ?? orderDto.customerEmail,
+      customerEmail: orderDto.customerEmail ?? orderDto.email,
+      address: orderDto.address ?? orderDto.customerAddress,
+      customerAddress: orderDto.customerAddress ?? orderDto.address,
+      taxId: orderDto.taxId ?? orderDto.customerTaxId,
+      customerTaxId: orderDto.customerTaxId ?? orderDto.taxId,
+      branch: orderDto.branch ?? orderDto.customerBranch,
+      customerBranch: orderDto.customerBranch ?? orderDto.branch,
       note: orderDto.note ?? '',
       total: subtotal,
       subtotal,
@@ -629,8 +720,8 @@ export class OrdersService {
       remainingTotal,
       payment,
       paymentMethod: payment,
-      taxInvoice: 'no',
-      vatAmount: 0,
+      taxInvoice,
+      vatAmount,
       cart,
     };
   }
@@ -662,10 +753,24 @@ export class OrdersService {
         price: item.unitPrice,
         unitPrice: item.unitPrice,
         totalPrice: item.totalPrice,
+        lineTotal: item.lineTotal ?? item.totalPrice,
         sides: item.sides,
         material: item.material,
+        colorMode: item.colorMode,
+        type: item.type,
+        typePremium: item.typePremium,
+        shape: item.shape,
         size: item.size,
+        setCount: item.setCount,
+        inkjetType: item.inkjetType,
+        sizeFlex: item.sizeFlex,
+        stickerPVCType: item.stickerPVCType,
+        plotPlanType: item.plotPlanType,
+        deposit: item.deposit,
+        remaining: item.remaining,
+        fullPayment: item.fullPayment,
         note: item.note ?? item.productNote,
+        productNote: item.productNote,
       })),
       items: (plain.cart ?? []).map((item) => ({
         name: item.name,
@@ -709,6 +814,8 @@ export class OrdersService {
     const plain = order.toObject() as OrderPlainObject;
     const resolvedAddress = plain.address ?? plain.customerAddress;
     const resolvedTaxId = plain.taxId ?? plain.customerTaxId;
+    const resolvedEmail = plain.email ?? plain.customerEmail;
+    const resolvedBranch = plain.branch ?? plain.customerBranch;
 
     return {
       _id: order._id.toString(),
@@ -717,13 +824,23 @@ export class OrdersService {
       orderId: plain.orderId ?? order._id.toString(),
       orderNumber: plain.orderNumber,
       customerName: plain.customerName,
+      companyName: plain.companyName,
       phoneNumber: plain.phoneNumber,
-      email: plain.email,
+      email: resolvedEmail,
+      customerEmail: plain.customerEmail ?? resolvedEmail,
       address: resolvedAddress,
       customerAddress: plain.customerAddress ?? resolvedAddress,
       taxId: resolvedTaxId,
       customerTaxId: plain.customerTaxId ?? resolvedTaxId,
-      branch: plain.branch,
+      branch: resolvedBranch,
+      customerBranch: plain.customerBranch ?? resolvedBranch,
+      branchType: plain.branchType,
+      branchNo: plain.branchNo,
+      subDistrict: plain.subDistrict,
+      district: plain.district,
+      province: plain.province,
+      postalCode: plain.postalCode,
+      shippingAddress: plain.shippingAddress,
       note: plain.note,
       salesChannel: plain.salesChannel,
       total: plain.total,

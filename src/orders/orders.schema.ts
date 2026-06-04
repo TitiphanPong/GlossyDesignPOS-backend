@@ -34,10 +34,16 @@ export class Order {
   customerName!: string;
 
   @Prop()
+  companyName?: string;
+
+  @Prop()
   phoneNumber!: string;
 
   @Prop()
   email?: string;
+
+  @Prop()
+  customerEmail?: string;
 
   @Prop()
   address?: string;
@@ -53,6 +59,30 @@ export class Order {
 
   @Prop()
   branch?: string;
+
+  @Prop()
+  customerBranch?: string;
+
+  @Prop()
+  branchType?: string;
+
+  @Prop()
+  branchNo?: string;
+
+  @Prop()
+  subDistrict?: string;
+
+  @Prop()
+  district?: string;
+
+  @Prop()
+  province?: string;
+
+  @Prop()
+  postalCode?: string;
+
+  @Prop()
+  shippingAddress?: string;
 
   @Prop()
   note!: string;
@@ -145,11 +175,25 @@ export class Order {
         name: String,
         category: String,
         variantName: String,
-        variant: Object,
+        variant: {
+          id: String,
+          _id: String,
+          name: String,
+          price: Number,
+          note: String,
+          material: String,
+          sides: String,
+          size: String,
+          active: Boolean,
+          custom: Boolean,
+          width: Number,
+          height: Number,
+        },
         sides: String,
         material: String,
         colorMode: String,
         type: { type: String },
+        typePremium: { type: String },
         shape: { type: String },
         size: { type: String },
         setCount: Number,
@@ -161,9 +205,11 @@ export class Order {
           },
         ],
         stickerPVCType: String,
+        plotPlanType: String,
         qty: Number,
         unitPrice: Number,
         totalPrice: Number,
+        lineTotal: Number,
         productNote: String,
         note: String,
         deposit: Number,
@@ -173,26 +219,43 @@ export class Order {
     ],
   })
   cart!: {
+    key?: string;
     productId?: string;
     productCode?: string;
     typeCode?: string;
     name: string;
     category?: string;
     variantName?: string;
-    variant?: Record<string, unknown>;
+    variant?: {
+      id?: string;
+      _id?: string;
+      name: string;
+      price?: number;
+      note?: string;
+      material?: string;
+      sides?: string;
+      size?: string;
+      active?: boolean;
+      custom?: boolean;
+      width?: number;
+      height?: number;
+    };
     sides?: string;
     material?: string;
     colorMode?: string;
     type?: string;
+    typePremium?: string;
     shape?: string;
     size?: string;
     setCount?: number;
     inkjetType?: string;
     sizeFlex?: { height: string; width: string }[];
     stickerPVCType?: string;
+    plotPlanType?: string;
     qty: number;
     unitPrice: number;
     totalPrice: number;
+    lineTotal?: number;
     productNote?: string;
     note?: string;
     deposit?: number;

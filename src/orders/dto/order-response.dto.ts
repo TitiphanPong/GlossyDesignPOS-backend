@@ -8,6 +8,7 @@ type OrderPaymentDto = {
 };
 
 type OrderCartItemDto = {
+  key?: string;
   productId?: string;
   productCode?: string;
   typeCode?: string;
@@ -19,15 +20,18 @@ type OrderCartItemDto = {
   material?: string;
   colorMode?: string;
   type?: string;
+  typePremium?: string;
   shape?: string;
   size?: string;
   setCount?: number;
   inkjetType?: string;
   sizeFlex?: { height: string; width: string }[];
   stickerPVCType?: string;
+  plotPlanType?: string;
   qty: number;
   unitPrice: number;
   totalPrice: number;
+  lineTotal?: number;
   productNote?: string;
   note?: string;
   deposit?: number;
@@ -42,13 +46,23 @@ export class OrderResponseDto {
   orderId!: string;
   orderNumber?: string;
   customerName!: string;
+  companyName?: string;
   phoneNumber!: string;
   email?: string;
+  customerEmail?: string;
   address?: string;
   customerAddress?: string;
   taxId?: string;
   customerTaxId?: string;
   branch?: string;
+  customerBranch?: string;
+  branchType?: string;
+  branchNo?: string;
+  subDistrict?: string;
+  district?: string;
+  province?: string;
+  postalCode?: string;
+  shippingAddress?: string;
   note!: string;
   salesChannel?: string;
   total!: number;

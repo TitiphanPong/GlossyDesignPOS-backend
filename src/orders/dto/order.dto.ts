@@ -1,6 +1,7 @@
 import { Transform, Type } from 'class-transformer';
 import {
   IsArray,
+  IsBoolean,
   IsIn,
   IsNotEmpty,
   IsNumber,
@@ -16,7 +17,78 @@ import {
   PaymentMethod,
 } from '../orders.schema';
 
+export class OrderItemVariantDto {
+  @IsOptional()
+  @IsString()
+  id?: string;
+
+  @IsOptional()
+  @IsString()
+  _id?: string;
+
+  @IsString()
+  @IsNotEmpty()
+  name!: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  price?: number;
+
+  @IsOptional()
+  @IsString()
+  note?: string;
+
+  @IsOptional()
+  @IsString()
+  material?: string;
+
+  @IsOptional()
+  @Transform(({ value }) =>
+    value === undefined || value === null ? value : String(value),
+  )
+  @IsString()
+  sides?: string;
+
+  @IsOptional()
+  @IsString()
+  size?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  active?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  custom?: boolean;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  width?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  height?: number;
+}
+
+export class OrderItemSizeFlexDto {
+  @IsString()
+  height!: string;
+
+  @IsString()
+  width!: string;
+}
+
 export class OrderItemDto {
+  @IsOptional()
+  @IsString()
+  key?: string;
+
   @IsOptional()
   @IsString()
   productId?: string;
@@ -42,12 +114,57 @@ export class OrderItemDto {
   variantName?: string;
 
   @IsOptional()
+  @ValidateNested()
+  @Type(() => OrderItemVariantDto)
+  variant?: OrderItemVariantDto;
+
+  @IsOptional()
   @IsString()
   material?: string;
 
   @IsOptional()
   @IsString()
+  colorMode?: string;
+
+  @IsOptional()
+  @IsString()
+  type?: string;
+
+  @IsOptional()
+  @IsString()
+  typePremium?: string;
+
+  @IsOptional()
+  @IsString()
+  shape?: string;
+
+  @IsOptional()
+  @IsString()
   size?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  setCount?: number;
+
+  @IsOptional()
+  @IsString()
+  inkjetType?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => OrderItemSizeFlexDto)
+  sizeFlex?: OrderItemSizeFlexDto[];
+
+  @IsOptional()
+  @IsString()
+  stickerPVCType?: string;
+
+  @IsOptional()
+  @IsString()
+  plotPlanType?: string;
 
   @IsOptional()
   @Transform(({ value }) =>
@@ -93,8 +210,34 @@ export class OrderItemDto {
   total?: number;
 
   @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  lineTotal?: number;
+
+  @IsOptional()
+  @IsString()
+  productNote?: string;
+
+  @IsOptional()
   @IsString()
   note?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  deposit?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  remaining?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  fullPayment?: boolean;
 }
 
 export class CreateOrderDto {
@@ -104,7 +247,19 @@ export class CreateOrderDto {
 
   @IsOptional()
   @IsString()
+  orderId?: string;
+
+  @IsOptional()
+  @IsString()
+  orderNumber?: string;
+
+  @IsOptional()
+  @IsString()
   customerName?: string;
+
+  @IsOptional()
+  @IsString()
+  companyName?: string;
 
   @IsOptional()
   @IsString()
@@ -116,7 +271,71 @@ export class CreateOrderDto {
 
   @IsOptional()
   @IsString()
+  email?: string;
+
+  @IsOptional()
+  @IsString()
+  customerEmail?: string;
+
+  @IsOptional()
+  @IsString()
+  address?: string;
+
+  @IsOptional()
+  @IsString()
+  customerAddress?: string;
+
+  @IsOptional()
+  @IsString()
+  taxId?: string;
+
+  @IsOptional()
+  @IsString()
+  customerTaxId?: string;
+
+  @IsOptional()
+  @IsString()
+  branch?: string;
+
+  @IsOptional()
+  @IsString()
+  customerBranch?: string;
+
+  @IsOptional()
+  @IsString()
+  branchType?: string;
+
+  @IsOptional()
+  @IsString()
+  branchNo?: string;
+
+  @IsOptional()
+  @IsString()
+  subDistrict?: string;
+
+  @IsOptional()
+  @IsString()
+  district?: string;
+
+  @IsOptional()
+  @IsString()
+  province?: string;
+
+  @IsOptional()
+  @IsString()
+  postalCode?: string;
+
+  @IsOptional()
+  @IsString()
+  shippingAddress?: string;
+
+  @IsOptional()
+  @IsString()
   note?: string;
+
+  @IsOptional()
+  @IsString()
+  salesChannel?: string;
 
   @IsOptional()
   @IsIn(ORDER_STATUSES)
@@ -171,6 +390,16 @@ export class CreateOrderDto {
   @IsNumber()
   @Min(0)
   remainingTotal?: number;
+
+  @IsOptional()
+  @IsIn(['yes', 'no'])
+  taxInvoice?: 'yes' | 'no';
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  vatAmount?: number;
 
   @IsArray()
   @ValidateNested({ each: true })

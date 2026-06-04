@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { FilterQuery, isValidObjectId, Model } from 'mongoose';
 import { randomInt, randomUUID } from 'node:crypto';
@@ -13,6 +13,8 @@ import { UpdateUploadDto } from './dto/update-upload.dto';
 import { UploadStatus } from './uploads.enums';
 
 const REGEX_SPECIAL_CHARS = /[.*+?^${}()|[\]\\]/g;
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 @Injectable()
 export class UploadsService {
@@ -89,9 +91,7 @@ export class UploadsService {
   async getSignedUrlById(
     id: string,
   ): Promise<{ signedUrl: string; expiresIn: number } | null> {
-    const selector: FilterQuery<UploadDocument> = isValidObjectId(id)
-      ? { $or: [{ uploadId: id }, { _id: id }] }
-      : { uploadId: id };
+    const selector = this.selectorForUploadId(id);
     const row = await this.uploadModel.findOne(selector).lean();
     const firstFile = row?.files?.[0];
     if (!firstFile) {
@@ -181,9 +181,7 @@ export class UploadsService {
     id: string,
     dto: UpdateUploadDto,
   ): Promise<Record<string, unknown> | null> {
-    const selector: FilterQuery<UploadDocument> = isValidObjectId(id)
-      ? { $or: [{ uploadId: id }, { _id: id }] }
-      : { uploadId: id };
+    const selector = this.selectorForUploadId(id);
     const row = await this.uploadModel
       .findOneAndUpdate(selector, { $set: dto }, { new: true })
       .lean();
@@ -194,9 +192,7 @@ export class UploadsService {
   }
 
   async deleteUploadById(id: string): Promise<boolean> {
-    const selector: FilterQuery<UploadDocument> = isValidObjectId(id)
-      ? { $or: [{ uploadId: id }, { _id: id }] }
-      : { uploadId: id };
+    const selector = this.selectorForUploadId(id);
     const row = await this.uploadModel.findOneAndDelete(selector);
     if (!row) {
       return false;
@@ -206,6 +202,18 @@ export class UploadsService {
       row.files.map((file) => this.s3Service.deleteObject(file.s3Key)),
     );
     return true;
+  }
+
+  private selectorForUploadId(id: string): FilterQuery<UploadDocument> {
+    if (isValidObjectId(id)) {
+      return { $or: [{ uploadId: id }, { _id: id }] };
+    }
+
+    if (UUID_PATTERN.test(id)) {
+      return { uploadId: id };
+    }
+
+    throw new BadRequestException('Invalid upload id.');
   }
 
   private async toListItem(

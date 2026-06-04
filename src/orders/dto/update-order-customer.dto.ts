@@ -16,11 +16,26 @@ export class UpdateOrderCustomerDto {
   @MaxLength(255)
   customerName?: string;
 
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  companyName?: string;
+
   // Accepted for frontend compatibility, but intentionally ignored by the service.
   @IsOptional()
   @IsString()
   @MaxLength(50)
   phoneNumber?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  email?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  customerEmail?: string;
 
   @IsOptional()
   @IsString()
@@ -41,4 +56,49 @@ export class UpdateOrderCustomerDto {
   @IsString()
   @MaxLength(1000)
   customerAddress?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  branch?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  customerBranch?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  branchType?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  branchNo?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  subDistrict?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  district?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  province?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  postalCode?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  shippingAddress?: string;
 }

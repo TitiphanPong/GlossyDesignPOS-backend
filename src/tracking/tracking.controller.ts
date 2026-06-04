@@ -15,8 +15,14 @@ export class TrackingController {
   search(
     @Query('orderNumber') orderNumber?: string,
     @Query('phone') phone?: string,
+    @Query('q') q?: string,
   ) {
-    return this.ordersService.searchTracking({ orderNumber, phone });
+    return this.ordersService.searchTracking({ orderNumber, phone, q });
+  }
+
+  @Get('orders')
+  searchOrders(@Query('q') q?: string) {
+    return this.ordersService.searchTracking({ q });
   }
 
   @Get(':orderNumber')

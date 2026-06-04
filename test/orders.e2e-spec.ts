@@ -16,6 +16,7 @@ describe('OrdersController (e2e)', () => {
 
   const updateOrder = jest.fn();
   const trackOrder = jest.fn();
+  const create = jest.fn();
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -24,7 +25,7 @@ describe('OrdersController (e2e)', () => {
         {
           provide: OrdersService,
           useValue: {
-            create: jest.fn(),
+            create,
             findAll: jest.fn(),
             getSummary: jest.fn(),
             findLatestActive: jest.fn(),
@@ -65,6 +66,132 @@ describe('OrdersController (e2e)', () => {
   beforeEach(() => {
     updateOrder.mockReset();
     trackOrder.mockReset();
+    create.mockReset();
+  });
+
+  it('POST /orders accepts the current POS rich order payload', async () => {
+    create.mockResolvedValue({
+      _id: '61a1c287e53a7024d4ab81425',
+      orderId: '61a1c287e53a7024d4ab81425',
+      orderNumber: 'GL-20260604-0001',
+      customerName: 'Glossy Customer',
+      phoneNumber: '0812345678',
+      note: 'rush',
+      total: 1000,
+      subtotal: 1000,
+      discount: 0,
+      depositTotal: 500,
+      paidAmount: 500,
+      remainingTotal: 570,
+      payment: 'promptpay',
+      paymentMethod: 'promptpay',
+      status: 'partial',
+      taxInvoice: 'yes',
+      vatAmount: 70,
+      grandTotal: 1070,
+      payments: [],
+      statusHistory: [],
+      cart: [],
+    });
+
+    await request(server)
+      .post('/orders')
+      .send({
+        clientDraftId: 'draft-123',
+        customerName: 'Glossy Customer',
+        companyName: 'Glossy Co',
+        phoneNumber: '0812345678',
+        email: 'customer@example.com',
+        address: '88/8 Test Road',
+        taxId: '0123456789012',
+        branch: 'HQ',
+        salesChannel: 'pos',
+        payment: 'promptpay',
+        status: 'partial',
+        total: 1000,
+        discount: 0,
+        depositTotal: 500,
+        remainingTotal: 570,
+        taxInvoice: 'yes',
+        vatAmount: 70,
+        grandTotal: 1070,
+        cart: [
+          {
+            key: 'line-1',
+            name: 'Sticker PP',
+            category: 'Sticker',
+            variant: {
+              id: 'variant-a4',
+              name: 'A4',
+              price: 100,
+              custom: true,
+              width: 210,
+              height: 297,
+            },
+            qty: 10,
+            unitPrice: 100,
+            totalPrice: 1000,
+            lineTotal: 1000,
+            productNote: 'Matte finish',
+            colorMode: 'color',
+            type: 'normal',
+            shape: 'circle',
+            setCount: 2,
+            sizeFlex: [{ width: '210', height: '297' }],
+            material: 'pp',
+            sides: '1',
+            stickerPVCType: 'clear',
+            plotPlanType: 'a1',
+            typePremium: 'roundpin',
+            deposit: 500,
+            remaining: 500,
+            fullPayment: false,
+          },
+        ],
+      })
+      .expect(201);
+
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taxInvoice: 'yes',
+        vatAmount: 70,
+        companyName: 'Glossy Co',
+        cart: [
+          expect.objectContaining({
+            lineTotal: 1000,
+            plotPlanType: 'a1',
+          }),
+        ],
+      }),
+      undefined,
+    );
+  });
+
+  it('POST /orders keeps validation strict for unknown rich payload fields', async () => {
+    await request(server)
+      .post('/orders')
+      .send({
+        customerName: 'Glossy Customer',
+        cart: [
+          {
+            name: 'Sticker PP',
+            qty: 1,
+            unitPrice: 100,
+            totalPrice: 100,
+            unsupportedMetadata: true,
+          },
+        ],
+      })
+      .expect(400)
+      .expect(({ body }: { body: { message: string | string[] } }) => {
+        expect(body.message).toEqual(
+          expect.arrayContaining([
+            'cart.0.property unsupportedMetadata should not exist',
+          ]),
+        );
+      });
+
+    expect(create).not.toHaveBeenCalled();
   });
 
   it('PATCH /orders/:id updates customer info and returns the updated order', async () => {
