@@ -25,7 +25,7 @@ import {
   validateUploadedFiles,
 } from './validators/upload-file.validator';
 
-@Controller('uploads')
+@Controller(['uploads', 'upload'])
 export class UploadsController {
   constructor(private readonly uploadsService: UploadsService) {}
 

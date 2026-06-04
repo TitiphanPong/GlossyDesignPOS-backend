@@ -19,6 +19,15 @@ export class Upload {
   phone?: string;
 
   @Prop()
+  lineUserId?: string;
+
+  @Prop({ maxlength: 120 })
+  displayName?: string;
+
+  @Prop()
+  category?: string;
+
+  @Prop()
   note?: string;
 
   @Prop()
@@ -49,6 +58,10 @@ export class Upload {
       {
         originalName: { type: String, required: true },
         sanitizedName: { type: String, required: true },
+        fileId: { type: String },
+        name: { type: String },
+        downloadUrl: { type: String },
+        previewUrl: { type: String },
         mimeType: { type: String, required: true },
         size: { type: Number, required: true },
         s3Key: { type: String, required: true },
@@ -59,6 +72,10 @@ export class Upload {
   files!: Array<{
     originalName: string;
     sanitizedName: string;
+    fileId?: string;
+    name?: string;
+    downloadUrl?: string;
+    previewUrl?: string;
     mimeType: string;
     size: number;
     s3Key: string;

@@ -81,6 +81,12 @@ curl -X POST http://localhost:8080/uploads \
 - Stored S3 metadata is minimized (masked phone, jobType, customerName).
 - No AWS secret/credential is ever returned to clients.
 
+## Admin auth TODO
+
+Admin auth is not implemented yet. Add it as a dedicated change with password
+hashing, a login endpoint, JWT or secure cookie sessions, role-ready admin user
+storage, and guards applied to admin-only product/order/upload APIs.
+
 ## S3 retention policy (PDPA)
 
 Set lifecycle policy on `AWS_S3_BUCKET_PRIVATE` to auto-delete objects under prefix `uploads/` after your retention period (for example 30/60/90 days).

@@ -60,6 +60,9 @@ export class UploadsService {
       orderCode,
       customerName: dto.customerName,
       phone: dto.phone,
+      lineUserId: dto.lineUserId,
+      displayName: dto.displayName,
+      category: dto.category,
       note: dto.note,
       statusNote: dto.statusNote,
       batchId: dto.batchId,
@@ -213,6 +216,9 @@ export class UploadsService {
       uploadId: string;
       customerName?: string;
       phone?: string;
+      lineUserId?: string;
+      displayName?: string;
+      category?: string;
       note?: string;
       statusNote?: string;
       batchId?: string;
@@ -240,6 +246,10 @@ export class UploadsService {
           fileId: file.s3Key,
           name: file.originalName || file.sanitizedName,
           url,
+          downloadUrl: url,
+          previewUrl: url,
+          mimeType: (file as { mimeType?: string }).mimeType,
+          size: (file as { size?: number }).size,
         };
       }),
     );
@@ -249,11 +259,13 @@ export class UploadsService {
       uploadId: doc.uploadId,
       customerName: doc.customerName ?? '',
       phone: doc.phone ?? '',
+      lineUserId: doc.lineUserId ?? '',
+      displayName: doc.displayName ?? '',
       note: doc.note ?? '',
       statusNote: doc.statusNote ?? '',
       batchId: doc.batchId ?? null,
       stage: doc.stage ?? null,
-      category: doc.jobType,
+      category: doc.category ?? doc.jobType,
       jobType: doc.jobType,
       status: doc.status,
       createdAt: doc.createdAt,

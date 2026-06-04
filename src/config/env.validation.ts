@@ -41,9 +41,9 @@ class EnvironmentVariables {
   @IsString()
   AWS_S3_KMS_KEY_ID?: string;
 
-  @IsOptional()
   @IsString()
-  MONGODB_URI?: string;
+  @IsNotEmpty()
+  MONGODB_URI: string;
 
   @IsOptional()
   @IsIn(['development', 'test', 'production'])

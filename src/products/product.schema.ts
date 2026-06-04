@@ -1,13 +1,34 @@
 // src/products/product.schema.ts
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Document } from 'mongoose';
+import { HydratedDocument } from 'mongoose';
 
-export type ProductDocument = Product & Document;
+export type ProductDocument = HydratedDocument<Product>;
+
+export type ProductVariant = {
+  name: string;
+  code?: string;
+  price: number;
+  note?: string;
+  material?: string;
+  sides?: number;
+  size?: string;
+  active: boolean;
+  sortOrder?: number;
+};
 
 @Schema({ timestamps: true })
 export class Product {
   @Prop({ required: true })
   name: string;
+
+  @Prop({ required: true, unique: true, index: true, trim: true })
+  code: string;
+
+  @Prop({ required: true, unique: true, index: true, trim: true })
+  typeCode: string;
+
+  @Prop({ index: true })
+  category: string;
 
   @Prop()
   cover?: string;
@@ -16,23 +37,36 @@ export class Product {
   tint?: string;
 
   @Prop()
-  category: string;
+  badge?: string;
 
   @Prop()
-  badge?: 'NEW' | 'HIT';
+  description?: string;
+
+  @Prop({ default: true, index: true })
+  active: boolean;
+
+  @Prop()
+  sortOrder?: number;
+
+  @Prop()
+  deletedAt?: Date;
 
   @Prop([
     {
       name: { type: String, required: true },
+      code: { type: String },
       price: { type: Number, required: true },
       note: { type: String },
+      material: { type: String },
+      sides: { type: Number },
+      size: { type: String },
+      active: { type: Boolean, default: true },
+      sortOrder: { type: Number },
     },
   ])
-  variants: {
-    name: string;
-    price: number;
-    note?: string;
-  }[];
+  variants: ProductVariant[];
 }
 
 export const ProductSchema = SchemaFactory.createForClass(Product);
+
+ProductSchema.index({ category: 1, active: 1, sortOrder: 1 });

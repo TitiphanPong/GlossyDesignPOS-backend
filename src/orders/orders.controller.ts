@@ -13,8 +13,12 @@ import { Observable } from 'rxjs';
 import { OrdersService } from './orders.service';
 import { OrdersSseService } from './orders.sse.service';
 import { OrderResponseDto } from './dto/order-response.dto';
-import { Order } from './orders.schema';
 import { UpdateOrderCustomerDto } from './dto/update-order-customer.dto';
+import {
+  AddPaymentDto,
+  CreateOrderDto,
+  UpdateOrderStatusDto,
+} from './dto/order.dto';
 
 @Controller('orders')
 export class OrdersController {
@@ -25,7 +29,7 @@ export class OrdersController {
 
   @Post()
   async create(
-    @Body() order: Partial<Order>,
+    @Body() order: CreateOrderDto,
     @Headers('idempotency-key') idempotencyKey?: string,
   ): Promise<OrderResponseDto> {
     return this.ordersService.create(order, idempotencyKey);
@@ -57,9 +61,9 @@ export class OrdersController {
   @Patch(':id/status')
   async updateStatus(
     @Param('id') id: string,
-    @Body() body: { status: 'pending' | 'paid' | 'cancelled' },
+    @Body() body: UpdateOrderStatusDto,
   ) {
-    return this.ordersService.updateStatus(id, body.status);
+    return this.ordersService.updateStatus(id, body.status, body.statusNote);
   }
 
   @Get('by-order-id/:orderId')
@@ -80,11 +84,23 @@ export class OrdersController {
     return this.ordersService.updateCustomerInfo(id, body);
   }
 
+  @Post(':id/payments')
+  async addPayment(@Param('id') id: string, @Body() body: AddPaymentDto) {
+    return this.ordersService.addPayment(
+      id,
+      body.amount,
+      body.method,
+      body.note,
+    );
+  }
+
   @Patch(':id/payments')
-  async addPayment(
-    @Param('id') id: string,
-    @Body() body: { amount: number; method: 'cash' | 'promptpay' },
-  ) {
-    return this.ordersService.addPayment(id, body.amount, body.method);
+  async addPaymentLegacy(@Param('id') id: string, @Body() body: AddPaymentDto) {
+    return this.ordersService.addPayment(
+      id,
+      body.amount,
+      body.method,
+      body.note,
+    );
   }
 }

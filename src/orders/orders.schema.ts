@@ -1,19 +1,33 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument } from 'mongoose';
 
-export type PaymentMethod = 'cash' | 'promptpay';
-export type OrderStatus = 'pending' | 'partial' | 'paid' | 'cancelled';
+export const PAYMENT_METHODS = ['cash', 'promptpay'] as const;
+export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
+export const ORDER_STATUSES = [
+  'pending',
+  'producing',
+  'awaiting_payment',
+  'ready_for_pickup',
+  'delivered',
+  'cancelled',
+  'partial',
+  'paid',
+] as const;
+export type OrderStatus = (typeof ORDER_STATUSES)[number];
 export type OrderDocument = HydratedDocument<Order>;
 
 @Schema({ timestamps: true })
 export class Order {
-  @Prop({ unique: true, sparse: true, index: true })
+  @Prop({ unique: true, sparse: true })
   clientDraftId?: string;
 
   @Prop()
   orderId?: string;
 
-  @Prop({ unique: true, sparse: true, index: true })
+  @Prop({ unique: true, sparse: true })
+  idempotencyKey?: string;
+
+  @Prop({ unique: true, sparse: true })
   orderNumber?: string;
 
   @Prop()
@@ -50,24 +64,34 @@ export class Order {
   total!: number;
 
   @Prop({ default: 0 })
+  subtotal!: number;
+
+  @Prop({ default: 0 })
   discount!: number;
 
   @Prop({ default: 0 })
   depositTotal!: number;
 
   @Prop({ default: 0 })
+  paidAmount!: number;
+
+  @Prop({ default: 0 })
   remainingTotal!: number;
 
-  @Prop({ enum: ['cash', 'promptpay'], required: true })
+  @Prop({ type: String, enum: PAYMENT_METHODS, required: true })
   payment!: PaymentMethod;
 
+  @Prop({ type: String, enum: PAYMENT_METHODS })
+  paymentMethod?: PaymentMethod;
+
   @Prop({
-    enum: ['pending', 'partial', 'paid', 'cancelled'],
+    type: String,
+    enum: ORDER_STATUSES,
     default: 'pending',
   })
   status!: OrderStatus;
 
-  @Prop({ enum: ['yes', 'no'], default: 'no' })
+  @Prop({ type: String, enum: ['yes', 'no'], default: 'no' })
   taxInvoice!: 'yes' | 'no';
 
   @Prop({ default: 0 })
@@ -80,21 +104,49 @@ export class Order {
     type: [
       {
         amount: Number,
-        method: { type: String, enum: ['cash', 'promptpay'] },
+        method: { type: String, enum: PAYMENT_METHODS },
+        note: String,
         paidAt: { type: Date, default: Date.now },
       },
     ],
     default: [],
   })
-  payments!: { amount: number; method: PaymentMethod; paidAt: Date }[];
+  payments!: {
+    amount: number;
+    method: PaymentMethod;
+    note?: string;
+    paidAt: Date;
+  }[];
 
   @Prop({
     type: [
       {
+        status: { type: String, enum: ORDER_STATUSES, required: true },
+        note: String,
+        changedAt: { type: Date, default: Date.now },
+        changedBy: String,
+      },
+    ],
+    default: [],
+  })
+  statusHistory!: {
+    status: OrderStatus;
+    note?: string;
+    changedAt: Date;
+    changedBy?: string;
+  }[];
+
+  @Prop({
+    type: [
+      {
+        productId: String,
+        productCode: String,
+        typeCode: String,
         name: String,
         category: String,
+        variantName: String,
         variant: Object,
-        sides: String,
+        sides: Number,
         material: String,
         colorMode: String,
         type: { type: String },
@@ -121,10 +173,14 @@ export class Order {
     ],
   })
   cart!: {
+    productId?: string;
+    productCode?: string;
+    typeCode?: string;
     name: string;
     category?: string;
+    variantName?: string;
     variant?: Record<string, unknown>;
-    sides?: string;
+    sides?: number;
     material?: string;
     colorMode?: string;
     type?: string;
@@ -147,5 +203,4 @@ export class Order {
 
 export const OrderSchema = SchemaFactory.createForClass(Order);
 
-OrderSchema.index({ orderNumber: 1 }, { unique: true, sparse: true });
-OrderSchema.index({ clientDraftId: 1 }, { unique: true, sparse: true });
+OrderSchema.index({ status: 1, createdAt: -1 });

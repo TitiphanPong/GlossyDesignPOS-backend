@@ -24,6 +24,21 @@ export class UpdateUploadDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(120)
+  lineUserId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  displayName?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  category?: string;
+
+  @IsOptional()
+  @IsString()
   @MaxLength(1000)
   note?: string;
 

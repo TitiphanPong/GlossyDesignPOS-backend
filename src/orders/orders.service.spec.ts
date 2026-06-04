@@ -1,7 +1,4 @@
-import {
-  BadRequestException,
-  NotFoundException,
-} from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Model } from 'mongoose';
 import { RunningNumberService } from '../counters/running-number.service';
 import { OrderDocument } from './orders.schema';
@@ -15,9 +12,9 @@ type FindByIdAndUpdateArgs = [
 ];
 
 type OrderModelLike = {
-  findByIdAndUpdate: (
-    ...args: FindByIdAndUpdateArgs
-  ) => { exec: () => Promise<unknown> };
+  findByIdAndUpdate: (...args: FindByIdAndUpdateArgs) => {
+    exec: () => Promise<unknown>;
+  };
 };
 
 describe('OrdersService', () => {
@@ -31,7 +28,9 @@ describe('OrdersService', () => {
     emitOrderAndAutoClear: jest.fn(),
   } as unknown as OrdersSseService;
 
-  let findByIdAndUpdate: jest.MockedFunction<OrderModelLike['findByIdAndUpdate']>;
+  let findByIdAndUpdate: jest.MockedFunction<
+    OrderModelLike['findByIdAndUpdate']
+  >;
   let service: OrdersService;
 
   beforeEach(() => {

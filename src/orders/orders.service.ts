@@ -18,6 +18,7 @@ import {
   PaymentMethod,
 } from './orders.schema';
 import { OrdersSseService } from './orders.sse.service';
+import { CreateOrderDto } from './dto/order.dto';
 
 type AggregateTotal = { _id: null; total: number };
 type OrderPlainObject = Order & {
@@ -35,14 +36,24 @@ export class OrdersService {
   ) {}
 
   async create(
-    orderDto: Partial<Order>,
+    orderDto: CreateOrderDto,
     idempotencyKey?: string,
   ): Promise<OrderResponseDto> {
     const normalizedDraftId =
-      idempotencyKey?.trim() || orderDto.clientDraftId?.trim();
-    if (normalizedDraftId) {
+      orderDto.clientDraftId?.trim() || idempotencyKey?.trim();
+    const normalizedIdempotencyKey = idempotencyKey?.trim();
+    if (normalizedDraftId || normalizedIdempotencyKey) {
       const existing = await this.orderModel
-        .findOne({ clientDraftId: normalizedDraftId })
+        .findOne({
+          $or: [
+            ...(normalizedDraftId
+              ? [{ clientDraftId: normalizedDraftId }]
+              : []),
+            ...(normalizedIdempotencyKey
+              ? [{ idempotencyKey: normalizedIdempotencyKey }]
+              : []),
+          ],
+        })
         .exec();
       if (existing) {
         return this.toOrderResponse(existing);
@@ -55,11 +66,21 @@ export class OrdersService {
       try {
         const orderNumber =
           await this.runningNumberService.generateOrderNumber();
+        const normalizedOrder = this.normalizeOrderForCreate(orderDto);
         const createdOrder = new this.orderModel({
-          ...orderDto,
+          ...normalizedOrder,
           ...(normalizedDraftId ? { clientDraftId: normalizedDraftId } : {}),
+          ...(normalizedIdempotencyKey
+            ? { idempotencyKey: normalizedIdempotencyKey }
+            : {}),
           orderNumber,
-          status: orderDto.status ?? 'pending',
+          status: normalizedOrder.status ?? 'pending',
+          statusHistory: [
+            {
+              status: normalizedOrder.status ?? 'pending',
+              changedAt: new Date(),
+            },
+          ],
         });
         createdOrder.orderId = createdOrder._id.toString();
         const saved = await createdOrder.save();
@@ -83,6 +104,14 @@ export class OrdersService {
           if (normalizedDraftId && this.isDuplicateClientDraftIdError(error)) {
             const existing = await this.orderModel
               .findOne({ clientDraftId: normalizedDraftId })
+              .exec();
+            if (existing) {
+              return this.toOrderResponse(existing);
+            }
+          }
+          if (normalizedIdempotencyKey) {
+            const existing = await this.orderModel
+              .findOne({ idempotencyKey: normalizedIdempotencyKey })
               .exec();
             if (existing) {
               return this.toOrderResponse(existing);
@@ -113,7 +142,17 @@ export class OrdersService {
 
   async findLatestActive(): Promise<OrderResponseDto | null> {
     const order = await this.orderModel
-      .findOne({ status: { $in: ['pending', 'paid'] } })
+      .findOne({
+        status: {
+          $in: [
+            'pending',
+            'producing',
+            'awaiting_payment',
+            'ready_for_pickup',
+            'paid',
+          ],
+        },
+      })
       .sort({ updatedAt: -1 })
       .exec();
     return order ? this.toOrderResponse(order) : null;
@@ -122,18 +161,38 @@ export class OrdersService {
   async updateStatus(
     id: string,
     status: OrderStatus,
+    statusNote?: string,
   ): Promise<OrderResponseDto | null> {
     const updated = await this.orderModel
-      .findByIdAndUpdate(id, { status }, { new: true })
+      .findByIdAndUpdate(
+        id,
+        {
+          $set: { status },
+          $push: {
+            statusHistory: {
+              status,
+              note: statusNote,
+              changedAt: new Date(),
+            },
+          },
+        },
+        { new: true, runValidators: true },
+      )
       .exec();
 
     if (!updated) return null;
 
     const response = this.toOrderResponse(updated);
 
-    if (status === 'pending' || status === 'partial') {
+    if (
+      status === 'pending' ||
+      status === 'partial' ||
+      status === 'producing' ||
+      status === 'awaiting_payment' ||
+      status === 'ready_for_pickup'
+    ) {
       this.ordersSse.emitOrder(response);
-    } else if (status === 'paid') {
+    } else if (status === 'paid' || status === 'delivered') {
       this.ordersSse.emitOrderAndAutoClear(response, 7000);
     } else if (status === 'cancelled') {
       this.ordersSse.emitOrder(null);
@@ -244,18 +303,30 @@ export class OrdersService {
     id: string,
     amount: number,
     method: PaymentMethod,
+    note?: string,
   ): Promise<OrderResponseDto> {
     const order = await this.orderModel.findById(id);
-    if (!order) throw new Error('Order not found');
+    if (!order) throw new NotFoundException('Order not found');
 
+    if (amount <= 0) {
+      throw new BadRequestException('Payment amount must be greater than 0.');
+    }
     if (amount > order.remainingTotal) {
-      amount = order.remainingTotal;
+      throw new BadRequestException(
+        'Payment amount cannot exceed remaining total.',
+      );
     }
 
     order.depositTotal += amount;
-    order.remainingTotal = order.total - order.depositTotal;
-    order.payments.push({ amount, method, paidAt: new Date() });
-    order.status = order.remainingTotal === 0 ? 'paid' : 'partial';
+    order.paidAmount = (order.paidAmount ?? 0) + amount;
+    order.remainingTotal = Math.max(0, order.grandTotal - order.paidAmount);
+    order.payments.push({ amount, method, note, paidAt: new Date() });
+    order.status = order.remainingTotal === 0 ? 'paid' : 'awaiting_payment';
+    order.statusHistory.push({
+      status: order.status,
+      note,
+      changedAt: new Date(),
+    });
 
     const updated = await order.save();
     const response = this.toOrderResponse(updated);
@@ -267,6 +338,45 @@ export class OrdersService {
     }
 
     return response;
+  }
+
+  async findTrackingByOrderNumber(
+    orderNumber: string,
+  ): Promise<Record<string, unknown> | null> {
+    const order = await this.orderModel
+      .findOne({ $or: [{ orderNumber }, { orderId: orderNumber }] })
+      .exec();
+    return order ? this.toTrackingResponse(order) : null;
+  }
+
+  async searchTracking(query: {
+    orderNumber?: string;
+    phone?: string;
+  }): Promise<{ data: Record<string, unknown>[]; total: number }> {
+    const filter: Record<string, unknown> = {};
+    const or: Record<string, unknown>[] = [];
+    if (query.orderNumber?.trim()) {
+      const value = query.orderNumber.trim();
+      or.push({ orderNumber: value }, { orderId: value });
+    }
+    if (query.phone?.trim()) {
+      filter.phoneNumber = query.phone.trim();
+    }
+    if (or.length) {
+      filter.$or = or;
+    }
+
+    if (!Object.keys(filter).length) {
+      throw new BadRequestException('orderNumber or phone is required.');
+    }
+
+    const rows = await this.orderModel
+      .find(filter)
+      .sort({ createdAt: -1 })
+      .limit(10)
+      .exec();
+    const data = rows.map((order) => this.toTrackingResponse(order));
+    return { data, total: data.length };
   }
 
   async updateCustomerInfo(
@@ -378,6 +488,117 @@ export class OrdersService {
     return primaryValue ?? legacyValue;
   }
 
+  private normalizeOrderForCreate(orderDto: CreateOrderDto): Partial<Order> {
+    const cart = (orderDto.cart ?? []).map((item) => {
+      const qty = Number(item.qty ?? item.quantity);
+      const unitPrice = Number(item.unitPrice ?? item.price);
+      const totalPrice = Number(
+        item.totalPrice ?? item.total ?? qty * unitPrice,
+      );
+
+      if (!Number.isFinite(qty) || qty <= 0) {
+        throw new BadRequestException('Order item qty must be greater than 0.');
+      }
+      if (!Number.isFinite(unitPrice) || unitPrice < 0) {
+        throw new BadRequestException(
+          'Order item unitPrice must be 0 or more.',
+        );
+      }
+      if (!Number.isFinite(totalPrice) || totalPrice < 0) {
+        throw new BadRequestException(
+          'Order item totalPrice must be 0 or more.',
+        );
+      }
+
+      return {
+        ...item,
+        qty,
+        unitPrice,
+        totalPrice,
+      };
+    });
+
+    if (!cart.length) {
+      throw new BadRequestException(
+        'Order cart must contain at least one item.',
+      );
+    }
+
+    const subtotal =
+      orderDto.subtotal ??
+      orderDto.total ??
+      cart.reduce((sum, item) => sum + item.totalPrice, 0);
+    const discount = orderDto.discount ?? 0;
+    const grandTotal = orderDto.grandTotal ?? Math.max(0, subtotal - discount);
+    const paidAmount = orderDto.paidAmount ?? orderDto.depositTotal ?? 0;
+    const remainingTotal =
+      orderDto.remainingTotal ?? Math.max(0, grandTotal - paidAmount);
+    const payment = orderDto.paymentMethod ?? orderDto.payment ?? 'cash';
+
+    for (const [field, value] of Object.entries({
+      subtotal,
+      discount,
+      grandTotal,
+      paidAmount,
+      remainingTotal,
+    })) {
+      if (!Number.isFinite(value) || value < 0) {
+        throw new BadRequestException(`${field} must be 0 or more.`);
+      }
+    }
+
+    return {
+      ...orderDto,
+      customerName: orderDto.customerName ?? '',
+      phoneNumber: orderDto.phoneNumber ?? '',
+      note: orderDto.note ?? '',
+      total: subtotal,
+      subtotal,
+      discount,
+      grandTotal,
+      depositTotal: paidAmount,
+      paidAmount,
+      remainingTotal,
+      payment,
+      paymentMethod: payment,
+      taxInvoice: 'no',
+      vatAmount: 0,
+      cart,
+    };
+  }
+
+  private toTrackingResponse(order: OrderDocument): Record<string, unknown> {
+    const plain = order.toObject() as OrderPlainObject;
+
+    return {
+      orderNumber: plain.orderNumber,
+      status: plain.status,
+      customerName: plain.customerName,
+      phone: plain.phoneNumber ? this.maskPhone(plain.phoneNumber) : undefined,
+      createdAt: plain.createdAt,
+      updatedAt: plain.updatedAt,
+      items: (plain.cart ?? []).map((item) => ({
+        name: item.name,
+        category: item.category,
+        variantName: item.variantName,
+        qty: item.qty,
+      })),
+      grandTotal: plain.grandTotal ?? plain.total,
+      paidAmount: plain.paidAmount ?? plain.depositTotal ?? 0,
+      remainingTotal: plain.remainingTotal,
+      statusHistory: plain.statusHistory ?? [],
+      estimatedReadyAt: (plain as { estimatedReadyAt?: Date }).estimatedReadyAt,
+    };
+  }
+
+  private maskPhone(phone: string): string {
+    const digits = phone.trim();
+    if (digits.length <= 4) {
+      return '****';
+    }
+    return `${'*'.repeat(digits.length - 4)}${digits.slice(-4)}`;
+  }
+
   private toOrderResponse(order: OrderDocument): OrderResponseDto {
     const plain = order.toObject() as OrderPlainObject;
     const resolvedAddress = plain.address ?? plain.customerAddress;
@@ -386,6 +607,7 @@ export class OrdersService {
     return {
       _id: order._id.toString(),
       clientDraftId: plain.clientDraftId,
+      idempotencyKey: plain.idempotencyKey,
       orderId: plain.orderId ?? order._id.toString(),
       orderNumber: plain.orderNumber,
       customerName: plain.customerName,
@@ -399,15 +621,19 @@ export class OrdersService {
       note: plain.note,
       salesChannel: plain.salesChannel,
       total: plain.total,
+      subtotal: plain.subtotal ?? plain.total,
       discount: plain.discount,
       depositTotal: plain.depositTotal,
+      paidAmount: plain.paidAmount ?? plain.depositTotal,
       remainingTotal: plain.remainingTotal,
       payment: plain.payment,
+      paymentMethod: plain.paymentMethod ?? plain.payment,
       status: plain.status,
       taxInvoice: plain.taxInvoice,
       vatAmount: plain.vatAmount,
       grandTotal: plain.grandTotal,
       payments: plain.payments,
+      statusHistory: plain.statusHistory ?? [],
       cart: plain.cart,
       createdAt: plain.createdAt,
       updatedAt: plain.updatedAt,
