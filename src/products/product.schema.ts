@@ -10,7 +10,7 @@ export type ProductVariant = {
   price: number;
   note?: string;
   material?: string;
-  sides?: number;
+  sides?: string;
   size?: string;
   active: boolean;
   sortOrder?: number;
@@ -32,6 +32,12 @@ export class Product {
 
   @Prop()
   cover?: string;
+
+  @Prop()
+  icon?: string;
+
+  @Prop()
+  emoji?: string;
 
   @Prop()
   tint?: string;
@@ -58,7 +64,7 @@ export class Product {
       price: { type: Number, required: true },
       note: { type: String },
       material: { type: String },
-      sides: { type: Number },
+      sides: { type: String },
       size: { type: String },
       active: { type: Boolean, default: true },
       sortOrder: { type: Number },

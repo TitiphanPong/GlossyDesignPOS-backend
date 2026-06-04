@@ -1,4 +1,4 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   IsArray,
   IsIn,
@@ -50,9 +50,11 @@ export class OrderItemDto {
   size?: string;
 
   @IsOptional()
-  @Type(() => Number)
-  @IsNumber()
-  sides?: number;
+  @Transform(({ value }) =>
+    value === undefined || value === null ? value : String(value),
+  )
+  @IsString()
+  sides?: string;
 
   @IsOptional()
   @Type(() => Number)
@@ -107,6 +109,10 @@ export class CreateOrderDto {
   @IsOptional()
   @IsString()
   phoneNumber?: string;
+
+  @IsOptional()
+  @IsString()
+  phone?: string;
 
   @IsOptional()
   @IsString()

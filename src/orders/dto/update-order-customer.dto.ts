@@ -1,6 +1,16 @@
-import { IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
+import { ORDER_STATUSES, OrderStatus } from '../orders.schema';
 
 export class UpdateOrderCustomerDto {
+  @IsOptional()
+  @IsIn(ORDER_STATUSES)
+  status?: OrderStatus;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  statusNote?: string;
+
   @IsOptional()
   @IsString()
   @MaxLength(255)

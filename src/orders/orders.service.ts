@@ -158,6 +158,25 @@ export class OrdersService {
     return order ? this.toOrderResponse(order) : null;
   }
 
+  async trackOrder(
+    query?: string,
+  ): Promise<{ data: Record<string, unknown>[]; total: number }> {
+    const q = query?.trim();
+    if (!q) {
+      throw new BadRequestException('q is required.');
+    }
+
+    const rows = await this.orderModel
+      .find({
+        $or: [{ orderNumber: q }, { orderId: q }, { phoneNumber: q }],
+      })
+      .sort({ createdAt: -1 })
+      .limit(10)
+      .exec();
+    const data = rows.map((order) => this.toTrackingResponse(order));
+    return { data, total: data.length };
+  }
+
   async updateStatus(
     id: string,
     status: OrderStatus,
@@ -184,20 +203,69 @@ export class OrdersService {
 
     const response = this.toOrderResponse(updated);
 
-    if (
-      status === 'pending' ||
-      status === 'partial' ||
-      status === 'producing' ||
-      status === 'awaiting_payment' ||
-      status === 'ready_for_pickup'
-    ) {
-      this.ordersSse.emitOrder(response);
-    } else if (status === 'paid' || status === 'delivered') {
-      this.ordersSse.emitOrderAndAutoClear(response, 7000);
-    } else if (status === 'cancelled') {
-      this.ordersSse.emitOrder(null);
+    this.emitForStatus(response, status);
+
+    return response;
+  }
+
+  async updateOrder(
+    id: string,
+    updateDto: UpdateOrderCustomerDto,
+  ): Promise<OrderResponseDto> {
+    const { status, statusNote, ...customerFields } = updateDto;
+    const hasCustomerFields = Object.values(customerFields).some(
+      (value) => value !== undefined,
+    );
+
+    if (status !== undefined && !hasCustomerFields) {
+      const updated = await this.updateStatus(id, status, statusNote);
+      if (!updated) {
+        throw new NotFoundException(`Order not found for id "${id}".`);
+      }
+      return updated;
     }
 
+    if (!isValidObjectId(id)) {
+      throw new BadRequestException('Invalid order id.');
+    }
+
+    const update: Partial<Order> = hasCustomerFields
+      ? this.buildCustomerInfoUpdate(customerFields)
+      : {};
+
+    if (status !== undefined) {
+      update.status = status;
+    }
+
+    if (!Object.keys(update).length) {
+      throw new BadRequestException(
+        'At least one order field must be provided.',
+      );
+    }
+
+    const mongoUpdate: Record<string, unknown> = { $set: update };
+    if (status !== undefined) {
+      mongoUpdate.$push = {
+        statusHistory: {
+          status,
+          note: statusNote,
+          changedAt: new Date(),
+        },
+      };
+    }
+
+    const updated = await this.orderModel
+      .findByIdAndUpdate(id, mongoUpdate, { new: true, runValidators: true })
+      .exec();
+
+    if (!updated) {
+      throw new NotFoundException(`Order not found for id "${id}".`);
+    }
+
+    const response = this.toOrderResponse(updated);
+    if (status !== undefined) {
+      this.emitForStatus(response, status);
+    }
     return response;
   }
 
@@ -550,7 +618,7 @@ export class OrdersService {
     return {
       ...orderDto,
       customerName: orderDto.customerName ?? '',
-      phoneNumber: orderDto.phoneNumber ?? '',
+      phoneNumber: orderDto.phoneNumber ?? orderDto.phone ?? '',
       note: orderDto.note ?? '',
       total: subtotal,
       subtotal,
@@ -569,14 +637,36 @@ export class OrdersService {
 
   private toTrackingResponse(order: OrderDocument): Record<string, unknown> {
     const plain = order.toObject() as OrderPlainObject;
+    const id = order._id.toString();
 
     return {
+      _id: id,
+      orderId: plain.orderId ?? id,
       orderNumber: plain.orderNumber,
       status: plain.status,
       customerName: plain.customerName,
+      phoneNumber: plain.phoneNumber
+        ? this.maskPhone(plain.phoneNumber)
+        : undefined,
       phone: plain.phoneNumber ? this.maskPhone(plain.phoneNumber) : undefined,
+      total: plain.total,
       createdAt: plain.createdAt,
       updatedAt: plain.updatedAt,
+      cart: (plain.cart ?? []).map((item) => ({
+        name: item.name,
+        category: item.category,
+        variantName: item.variantName,
+        variant: item.variant,
+        qty: item.qty,
+        quantity: item.qty,
+        price: item.unitPrice,
+        unitPrice: item.unitPrice,
+        totalPrice: item.totalPrice,
+        sides: item.sides,
+        material: item.material,
+        size: item.size,
+        note: item.note ?? item.productNote,
+      })),
       items: (plain.cart ?? []).map((item) => ({
         name: item.name,
         category: item.category,
@@ -597,6 +687,22 @@ export class OrdersService {
       return '****';
     }
     return `${'*'.repeat(digits.length - 4)}${digits.slice(-4)}`;
+  }
+
+  private emitForStatus(response: OrderResponseDto, status: OrderStatus): void {
+    if (
+      status === 'pending' ||
+      status === 'partial' ||
+      status === 'producing' ||
+      status === 'awaiting_payment' ||
+      status === 'ready_for_pickup'
+    ) {
+      this.ordersSse.emitOrder(response);
+    } else if (status === 'paid' || status === 'delivered') {
+      this.ordersSse.emitOrderAndAutoClear(response, 7000);
+    } else if (status === 'cancelled') {
+      this.ordersSse.emitOrder(null);
+    }
   }
 
   private toOrderResponse(order: OrderDocument): OrderResponseDto {

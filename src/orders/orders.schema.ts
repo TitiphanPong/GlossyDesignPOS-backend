@@ -146,7 +146,7 @@ export class Order {
         category: String,
         variantName: String,
         variant: Object,
-        sides: Number,
+        sides: String,
         material: String,
         colorMode: String,
         type: { type: String },
@@ -180,7 +180,7 @@ export class Order {
     category?: string;
     variantName?: string;
     variant?: Record<string, unknown>;
-    sides?: number;
+    sides?: string;
     material?: string;
     colorMode?: string;
     type?: string;

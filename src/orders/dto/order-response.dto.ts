@@ -15,7 +15,7 @@ type OrderCartItemDto = {
   category?: string;
   variantName?: string;
   variant?: Record<string, unknown>;
-  sides?: number;
+  sides?: string;
   material?: string;
   colorMode?: string;
   type?: string;

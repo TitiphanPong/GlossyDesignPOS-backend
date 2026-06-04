@@ -1,8 +1,7 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   IsArray,
   IsBoolean,
-  IsInt,
   IsNotEmpty,
   IsNumber,
   IsOptional,
@@ -39,10 +38,12 @@ export class ProductVariantDto {
   material?: string;
 
   @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(0)
-  sides?: number;
+  @Transform(({ value }) =>
+    value === undefined || value === null ? value : String(value),
+  )
+  @IsString()
+  @MaxLength(80)
+  sides?: string;
 
   @IsOptional()
   @IsString()
@@ -55,7 +56,7 @@ export class ProductVariantDto {
 
   @IsOptional()
   @Type(() => Number)
-  @IsInt()
+  @IsNumber()
   sortOrder?: number;
 }
 
@@ -86,6 +87,14 @@ export class CreateProductDto {
 
   @IsOptional()
   @IsString()
+  icon?: string;
+
+  @IsOptional()
+  @IsString()
+  emoji?: string;
+
+  @IsOptional()
+  @IsString()
   tint?: string;
 
   @IsOptional()
@@ -104,7 +113,7 @@ export class CreateProductDto {
 
   @IsOptional()
   @Type(() => Number)
-  @IsInt()
+  @IsNumber()
   sortOrder?: number;
 
   @IsArray()
@@ -144,6 +153,14 @@ export class UpdateProductDto {
 
   @IsOptional()
   @IsString()
+  icon?: string;
+
+  @IsOptional()
+  @IsString()
+  emoji?: string;
+
+  @IsOptional()
+  @IsString()
   tint?: string;
 
   @IsOptional()
@@ -162,7 +179,7 @@ export class UpdateProductDto {
 
   @IsOptional()
   @Type(() => Number)
-  @IsInt()
+  @IsNumber()
   sortOrder?: number;
 
   @IsOptional()

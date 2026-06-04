@@ -14,7 +14,8 @@ describe('OrdersController (e2e)', () => {
   let app: INestApplication;
   let server: Parameters<typeof request>[0];
 
-  const updateCustomerInfo = jest.fn();
+  const updateOrder = jest.fn();
+  const trackOrder = jest.fn();
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -28,9 +29,10 @@ describe('OrdersController (e2e)', () => {
             getSummary: jest.fn(),
             findLatestActive: jest.fn(),
             updateStatus: jest.fn(),
+            trackOrder,
             findByOrderId: jest.fn(),
             findById: jest.fn(),
-            updateCustomerInfo,
+            updateOrder,
             addPayment: jest.fn(),
           },
         },
@@ -61,11 +63,12 @@ describe('OrdersController (e2e)', () => {
   });
 
   beforeEach(() => {
-    updateCustomerInfo.mockReset();
+    updateOrder.mockReset();
+    trackOrder.mockReset();
   });
 
   it('PATCH /orders/:id updates customer info and returns the updated order', async () => {
-    updateCustomerInfo.mockResolvedValue({
+    updateOrder.mockResolvedValue({
       _id: '61a1c287e53a7024d4ab81425',
       orderId: '61a1c287e53a7024d4ab81425',
       customerName: 'Sarayut 111',
@@ -107,7 +110,7 @@ describe('OrdersController (e2e)', () => {
         expect(body.customerAddress).toBe('88/8 Moo Baan Klang Muang');
       });
 
-    expect(updateCustomerInfo).toHaveBeenCalledWith(
+    expect(updateOrder).toHaveBeenCalledWith(
       '61a1c287e53a7024d4ab81425',
       {
         customerName: 'Sarayut 111',
@@ -121,7 +124,7 @@ describe('OrdersController (e2e)', () => {
   });
 
   it('PATCH /orders/:id returns 404 when order is missing', async () => {
-    updateCustomerInfo.mockRejectedValue(
+    updateOrder.mockRejectedValue(
       new NotFoundException('Order not found for id "missing-order".'),
     );
 
@@ -145,6 +148,73 @@ describe('OrdersController (e2e)', () => {
         );
       });
 
-    expect(updateCustomerInfo).not.toHaveBeenCalled();
+    expect(updateOrder).not.toHaveBeenCalled();
+  });
+
+  it('PATCH /orders/:id/status accepts workflow statuses', async () => {
+    const updateStatus = app.get(OrdersService).updateStatus as jest.Mock;
+    updateStatus.mockResolvedValue({
+      _id: '61a1c287e53a7024d4ab81425',
+      orderId: '61a1c287e53a7024d4ab81425',
+      status: 'producing',
+    });
+
+    await request(server)
+      .patch('/orders/61a1c287e53a7024d4ab81425/status')
+      .send({ status: 'producing' })
+      .expect(200)
+      .expect(({ body }: { body: Record<string, unknown> }) => {
+        expect(body.status).toBe('producing');
+      });
+
+    expect(updateStatus).toHaveBeenCalledWith(
+      '61a1c287e53a7024d4ab81425',
+      'producing',
+      undefined,
+    );
+  });
+
+  it('PATCH /orders/:id accepts status updates', async () => {
+    updateOrder.mockResolvedValue({
+      _id: '61a1c287e53a7024d4ab81425',
+      orderId: '61a1c287e53a7024d4ab81425',
+      status: 'ready_for_pickup',
+    });
+
+    await request(server)
+      .patch('/orders/61a1c287e53a7024d4ab81425')
+      .send({ status: 'ready_for_pickup' })
+      .expect(200)
+      .expect(({ body }: { body: Record<string, unknown> }) => {
+        expect(body.status).toBe('ready_for_pickup');
+      });
+
+    expect(updateOrder).toHaveBeenCalledWith('61a1c287e53a7024d4ab81425', {
+      status: 'ready_for_pickup',
+    });
+  });
+
+  it('GET /orders/track searches by q', async () => {
+    trackOrder.mockResolvedValue({
+      data: [
+        {
+          _id: '61a1c287e53a7024d4ab81425',
+          orderId: '61a1c287e53a7024d4ab81425',
+          orderNumber: 'GL-20260604-0001',
+          status: 'pending',
+        },
+      ],
+      total: 1,
+    });
+
+    await request(server)
+      .get('/orders/track')
+      .query({ q: 'GL-20260604-0001' })
+      .expect(200)
+      .expect(({ body }: { body: { data: Array<Record<string, unknown>> } }) => {
+        expect(body.data[0].orderNumber).toBe('GL-20260604-0001');
+      });
+
+    expect(trackOrder).toHaveBeenCalledWith('GL-20260604-0001');
   });
 });

@@ -7,6 +7,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   Sse,
 } from '@nestjs/common';
 import { Observable } from 'rxjs';
@@ -36,7 +37,10 @@ export class OrdersController {
   }
 
   @Get()
-  async findAll() {
+  async findAll(@Query('q') q?: string) {
+    if (q?.trim()) {
+      return this.ordersService.trackOrder(q);
+    }
     return this.ordersService.findAll();
   }
 
@@ -49,6 +53,11 @@ export class OrdersController {
   @Sse('events')
   events(): Observable<any> {
     return this.ordersSse.asObservable();
+  }
+
+  @Get('track')
+  async track(@Query('q') q?: string) {
+    return this.ordersService.trackOrder(q);
   }
 
   // (ตัวเลือก) Endpoint ดึงออเดอร์ล่าสุดที่เป็น active (pending/paid)
@@ -81,7 +90,7 @@ export class OrdersController {
     @Param('id') id: string,
     @Body() body: UpdateOrderCustomerDto,
   ): Promise<OrderResponseDto> {
-    return this.ordersService.updateCustomerInfo(id, body);
+    return this.ordersService.updateOrder(id, body);
   }
 
   @Post(':id/payments')
