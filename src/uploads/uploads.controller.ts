@@ -38,7 +38,7 @@ export class UploadsController {
   @Throttle({ default: { ttl: 60_000, limit: 20 } })
   @UseInterceptors(
     FilesInterceptor('files', 10, {
-      storage: memoryStorage(),
+      storage: memoryStorage(), // NOSONAR: file count, size, and request rate are capped.
       limits: {
         files: 10,
         fileSize: MAX_FILE_SIZE_BYTES,

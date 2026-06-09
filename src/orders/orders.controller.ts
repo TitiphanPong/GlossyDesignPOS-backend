@@ -105,11 +105,6 @@ export class OrdersController {
 
   @Patch(':id/payments')
   async addPaymentLegacy(@Param('id') id: string, @Body() body: AddPaymentDto) {
-    return this.ordersService.addPayment(
-      id,
-      body.amount,
-      body.method,
-      body.note,
-    );
+    return this.addPayment(id, body);
   }
 }

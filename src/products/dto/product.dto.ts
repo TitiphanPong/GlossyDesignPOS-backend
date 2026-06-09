@@ -10,6 +10,7 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
+import { transformOptionalString } from '../../common/transforms/optional-string.transform';
 
 export class ProductVariantDto {
   @IsString()
@@ -38,9 +39,7 @@ export class ProductVariantDto {
   material?: string;
 
   @IsOptional()
-  @Transform(({ value }) =>
-    value === undefined || value === null ? value : String(value),
-  )
+  @Transform(transformOptionalString)
   @IsString()
   @MaxLength(80)
   sides?: string;

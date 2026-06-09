@@ -118,7 +118,7 @@ describe('UploadsController (e2e)', () => {
   });
 
   it('POST /uploads file too large', async () => {
-    const tooLargeBuffer = Buffer.alloc(100 * 1024 * 1024 + 1, 'a');
+    const tooLargeBuffer = Buffer.alloc(7_500_001, 'a');
 
     await request(server)
       .post('/uploads')

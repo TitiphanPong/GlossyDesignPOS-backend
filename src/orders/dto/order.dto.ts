@@ -16,6 +16,7 @@ import {
   PAYMENT_METHODS,
   PaymentMethod,
 } from '../orders.schema';
+import { transformOptionalString } from '../../common/transforms/optional-string.transform';
 
 export class OrderItemVariantDto {
   @IsOptional()
@@ -45,9 +46,7 @@ export class OrderItemVariantDto {
   material?: string;
 
   @IsOptional()
-  @Transform(({ value }) =>
-    value === undefined || value === null ? value : String(value),
-  )
+  @Transform(transformOptionalString)
   @IsString()
   sides?: string;
 
@@ -167,9 +166,7 @@ export class OrderItemDto {
   plotPlanType?: string;
 
   @IsOptional()
-  @Transform(({ value }) =>
-    value === undefined || value === null ? value : String(value),
-  )
+  @Transform(transformOptionalString)
   @IsString()
   sides?: string;
 

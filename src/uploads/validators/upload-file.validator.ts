@@ -1,7 +1,7 @@
-import { extname } from 'path';
+import { extname } from 'node:path';
 import { BadRequestException } from '@nestjs/common';
 
-export const MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024;
+export const MAX_FILE_SIZE_BYTES = 7_500_000;
 
 const ALLOWED_EXTENSIONS = new Set([
   '.pdf',

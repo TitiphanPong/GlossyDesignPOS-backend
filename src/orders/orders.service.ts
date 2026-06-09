@@ -26,6 +26,10 @@ type OrderPlainObject = Order & {
   createdAt?: Date;
   updatedAt?: Date;
 };
+type CreateOrderIdentity = {
+  clientDraftId?: string;
+  idempotencyKey?: string;
+};
 
 const REGEX_SPECIAL_CHARS = /[.*+?^${}()|[\]\\]/g;
 
@@ -41,91 +45,27 @@ export class OrdersService {
     orderDto: CreateOrderDto,
     idempotencyKey?: string,
   ): Promise<OrderResponseDto> {
-    const normalizedDraftId =
-      orderDto.clientDraftId?.trim() || idempotencyKey?.trim();
-    const normalizedIdempotencyKey = idempotencyKey?.trim();
-    if (normalizedDraftId || normalizedIdempotencyKey) {
-      const existing = await this.orderModel
-        .findOne({
-          $or: [
-            ...(normalizedDraftId
-              ? [{ clientDraftId: normalizedDraftId }]
-              : []),
-            ...(normalizedIdempotencyKey
-              ? [{ idempotencyKey: normalizedIdempotencyKey }]
-              : []),
-          ],
-        })
-        .exec();
-      if (existing) {
-        return this.toOrderResponse(existing);
-      }
+    const identity = this.normalizeCreateIdentity(orderDto, idempotencyKey);
+    const existing = await this.findExistingOrderForCreate(identity);
+    if (existing) {
+      return this.toOrderResponse(existing);
     }
 
     const maxAttempts = 3;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       try {
-        const orderNumber =
-          await this.runningNumberService.generateOrderNumber();
-        const normalizedOrder = this.normalizeOrderForCreate(orderDto);
-        const createdOrder = new this.orderModel({
-          ...normalizedOrder,
-          ...(normalizedDraftId ? { clientDraftId: normalizedDraftId } : {}),
-          ...(normalizedIdempotencyKey
-            ? { idempotencyKey: normalizedIdempotencyKey }
-            : {}),
-          orderNumber,
-          status: normalizedOrder.status ?? 'pending',
-          statusHistory: [
-            {
-              status: normalizedOrder.status ?? 'pending',
-              changedAt: new Date(),
-            },
-          ],
-        });
-        createdOrder.orderId = createdOrder._id.toString();
-        const saved = await createdOrder.save();
-        const response = this.toOrderResponse(saved);
-
-        this.ordersSse.emitOrder(response);
-
-        return response;
+        return await this.persistNewOrder(orderDto, identity);
       } catch (error) {
-        if (this.isDuplicateOrderNumberError(error)) {
-          if (attempt === maxAttempts) {
-            throw new ConflictException(
-              'Failed to generate a unique order number.',
-            );
-          }
-
-          continue;
+        const recovered = await this.recoverFromCreateError(
+          error,
+          identity,
+          attempt,
+          maxAttempts,
+        );
+        if (recovered) {
+          return recovered;
         }
-
-        if (this.isDuplicateKeyError(error)) {
-          if (normalizedDraftId && this.isDuplicateClientDraftIdError(error)) {
-            const existing = await this.orderModel
-              .findOne({ clientDraftId: normalizedDraftId })
-              .exec();
-            if (existing) {
-              return this.toOrderResponse(existing);
-            }
-          }
-          if (normalizedIdempotencyKey) {
-            const existing = await this.orderModel
-              .findOne({ idempotencyKey: normalizedIdempotencyKey })
-              .exec();
-            if (existing) {
-              return this.toOrderResponse(existing);
-            }
-          }
-
-          throw new ConflictException(
-            'Duplicate value violates a unique index.',
-          );
-        }
-
-        throw error;
       }
     }
 
@@ -492,6 +432,108 @@ export class OrdersService {
     if (!isValidObjectId(value)) {
       throw new BadRequestException(`Invalid ${label}.`);
     }
+  }
+
+  private normalizeCreateIdentity(
+    orderDto: CreateOrderDto,
+    idempotencyKey?: string,
+  ): CreateOrderIdentity {
+    const normalizedIdempotencyKey = idempotencyKey?.trim() || undefined;
+
+    return {
+      clientDraftId: orderDto.clientDraftId?.trim() || normalizedIdempotencyKey,
+      idempotencyKey: normalizedIdempotencyKey,
+    };
+  }
+
+  private async findExistingOrderForCreate(identity: CreateOrderIdentity) {
+    const candidates: Record<string, string>[] = [];
+    if (identity.clientDraftId) {
+      candidates.push({ clientDraftId: identity.clientDraftId });
+    }
+    if (identity.idempotencyKey) {
+      candidates.push({ idempotencyKey: identity.idempotencyKey });
+    }
+    if (candidates.length === 0) {
+      return null;
+    }
+
+    return this.orderModel.findOne({ $or: candidates }).exec();
+  }
+
+  private async persistNewOrder(
+    orderDto: CreateOrderDto,
+    identity: CreateOrderIdentity,
+  ): Promise<OrderResponseDto> {
+    const orderNumber = await this.runningNumberService.generateOrderNumber();
+    const normalizedOrder = this.normalizeOrderForCreate(orderDto);
+    const status = normalizedOrder.status ?? 'pending';
+    const createdOrder = new this.orderModel({
+      ...normalizedOrder,
+      ...(identity.clientDraftId
+        ? { clientDraftId: identity.clientDraftId }
+        : {}),
+      ...(identity.idempotencyKey
+        ? { idempotencyKey: identity.idempotencyKey }
+        : {}),
+      orderNumber,
+      status,
+      statusHistory: [{ status, changedAt: new Date() }],
+    });
+    createdOrder.orderId = createdOrder._id.toString();
+
+    const saved = await createdOrder.save();
+    const response = this.toOrderResponse(saved);
+    this.ordersSse.emitOrder(response);
+    return response;
+  }
+
+  private async recoverFromCreateError(
+    error: unknown,
+    identity: CreateOrderIdentity,
+    attempt: number,
+    maxAttempts: number,
+  ): Promise<OrderResponseDto | null> {
+    if (this.isDuplicateOrderNumberError(error)) {
+      if (attempt < maxAttempts) {
+        return null;
+      }
+
+      throw new ConflictException('Failed to generate a unique order number.');
+    }
+
+    if (!this.isDuplicateKeyError(error)) {
+      throw error;
+    }
+
+    const existing = await this.findOrderAfterDuplicateKey(error, identity);
+    if (existing) {
+      return this.toOrderResponse(existing);
+    }
+
+    throw new ConflictException('Duplicate value violates a unique index.');
+  }
+
+  private async findOrderAfterDuplicateKey(
+    error: MongoServerError,
+    identity: CreateOrderIdentity,
+  ) {
+    if (identity.clientDraftId && this.isDuplicateClientDraftIdError(error)) {
+      const existing = await this.orderModel
+        .findOne({ clientDraftId: identity.clientDraftId })
+        .exec();
+      if (existing) {
+        return existing;
+      }
+    }
+
+    if (!identity.idempotencyKey) {
+      return null;
+    }
+
+    return this.orderModel
+      .findOne({ idempotencyKey: identity.idempotencyKey })
+      .exec();
   }
 
   private toSafePartialRegex(value: string): string {

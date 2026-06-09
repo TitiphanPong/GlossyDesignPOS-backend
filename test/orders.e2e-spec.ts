@@ -15,6 +15,7 @@ describe('OrdersController (e2e)', () => {
   let server: Parameters<typeof request>[0];
 
   const updateOrder = jest.fn();
+  const updateStatus = jest.fn();
   const trackOrder = jest.fn();
   const create = jest.fn();
 
@@ -29,7 +30,7 @@ describe('OrdersController (e2e)', () => {
             findAll: jest.fn(),
             getSummary: jest.fn(),
             findLatestActive: jest.fn(),
-            updateStatus: jest.fn(),
+            updateStatus,
             trackOrder,
             findByOrderId: jest.fn(),
             findById: jest.fn(),
@@ -65,6 +66,7 @@ describe('OrdersController (e2e)', () => {
 
   beforeEach(() => {
     updateOrder.mockReset();
+    updateStatus.mockReset();
     trackOrder.mockReset();
     create.mockReset();
   });
@@ -237,17 +239,14 @@ describe('OrdersController (e2e)', () => {
         expect(body.customerAddress).toBe('88/8 Moo Baan Klang Muang');
       });
 
-    expect(updateOrder).toHaveBeenCalledWith(
-      '61a1c287e53a7024d4ab81425',
-      {
-        customerName: 'Sarayut 111',
-        phoneNumber: '0812345678',
-        taxId: '0123456789012',
-        customerTaxId: '0123456789012',
-        address: '88/8 Moo Baan Klang Muang',
-        customerAddress: '88/8 Moo Baan Klang Muang',
-      },
-    );
+    expect(updateOrder).toHaveBeenCalledWith('61a1c287e53a7024d4ab81425', {
+      customerName: 'Sarayut 111',
+      phoneNumber: '0812345678',
+      taxId: '0123456789012',
+      customerTaxId: '0123456789012',
+      address: '88/8 Moo Baan Klang Muang',
+      customerAddress: '88/8 Moo Baan Klang Muang',
+    });
   });
 
   it('PATCH /orders/:id returns 404 when order is missing', async () => {
@@ -279,7 +278,6 @@ describe('OrdersController (e2e)', () => {
   });
 
   it('PATCH /orders/:id/status accepts workflow statuses', async () => {
-    const updateStatus = app.get(OrdersService).updateStatus as jest.Mock;
     updateStatus.mockResolvedValue({
       _id: '61a1c287e53a7024d4ab81425',
       orderId: '61a1c287e53a7024d4ab81425',
@@ -338,9 +336,11 @@ describe('OrdersController (e2e)', () => {
       .get('/orders/track')
       .query({ q: 'GL-20260604-0001' })
       .expect(200)
-      .expect(({ body }: { body: { data: Array<Record<string, unknown>> } }) => {
-        expect(body.data[0].orderNumber).toBe('GL-20260604-0001');
-      });
+      .expect(
+        ({ body }: { body: { data: Array<Record<string, unknown>> } }) => {
+          expect(body.data[0].orderNumber).toBe('GL-20260604-0001');
+        },
+      );
 
     expect(trackOrder).toHaveBeenCalledWith('GL-20260604-0001');
   });

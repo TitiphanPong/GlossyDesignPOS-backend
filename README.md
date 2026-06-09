@@ -23,7 +23,7 @@ Form fields:
 Files:
 - `files[]` (required, min 1, max 10)
 - Allowed: `pdf,jpg,jpeg,png,ai,psd,zip,doc,docx,xls,xlsx,csv`
-- Max per file: `100MB`
+- Max per file: `8MB`
 
 Success response:
 ```json
@@ -72,7 +72,7 @@ curl -X POST http://localhost:8080/uploads \
 - CORS restricted by `FRONTEND_ORIGIN` only.
 - Global `ValidationPipe` with `whitelist + forbidNonWhitelisted`.
 - Upload endpoint rate-limited with `@nestjs/throttler`.
-- Multer memory storage with strict file count and `100MB` per file cap.
+- Multer memory storage with strict file count and `8MB` per file cap.
 - Validation checks both file extension and MIME type.
 - Filename sanitized before S3 key generation.
 - S3 uploads are private (no `public-read`) with server-side encryption:
