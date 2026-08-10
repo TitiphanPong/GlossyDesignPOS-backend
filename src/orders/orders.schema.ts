@@ -15,9 +15,14 @@ export const ORDER_STATUSES = [
 ] as const;
 export type OrderStatus = (typeof ORDER_STATUSES)[number];
 export type OrderDocument = HydratedDocument<Order>;
+export const ORDER_TYPES = ['NORMAL', 'QUICK_SALE'] as const;
+export type OrderType = (typeof ORDER_TYPES)[number];
 
 @Schema({ timestamps: true })
 export class Order {
+  @Prop({ type: String, enum: ORDER_TYPES, default: 'NORMAL', index: true })
+  orderType!: OrderType;
+
   @Prop({ unique: true, sparse: true })
   clientDraftId?: string;
 
@@ -129,6 +134,12 @@ export class Order {
 
   @Prop({ default: 0 })
   grandTotal!: number;
+
+  @Prop()
+  receivedAmount?: number;
+
+  @Prop()
+  changeAmount?: number;
 
   @Prop({
     type: [

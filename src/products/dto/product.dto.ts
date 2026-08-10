@@ -115,6 +115,19 @@ export class CreateProductDto {
   @IsNumber()
   sortOrder?: number;
 
+  @IsOptional()
+  @IsBoolean()
+  quickSaleEnabled?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  isHotMenu?: boolean;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  quickSaleSortOrder?: number;
+
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => ProductVariantDto)
@@ -180,6 +193,19 @@ export class UpdateProductDto {
   @Type(() => Number)
   @IsNumber()
   sortOrder?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  quickSaleEnabled?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  isHotMenu?: boolean;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  quickSaleSortOrder?: number;
 
   @IsOptional()
   @IsArray()

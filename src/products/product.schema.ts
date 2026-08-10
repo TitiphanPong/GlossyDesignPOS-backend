@@ -54,6 +54,15 @@ export class Product {
   @Prop()
   sortOrder?: number;
 
+  @Prop({ default: false, index: true })
+  quickSaleEnabled?: boolean;
+
+  @Prop({ default: false, index: true })
+  isHotMenu?: boolean;
+
+  @Prop()
+  quickSaleSortOrder?: number;
+
   @Prop()
   deletedAt?: Date;
 

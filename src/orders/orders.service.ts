@@ -773,6 +773,7 @@ export class OrdersService {
     const id = order._id.toString();
 
     return {
+      orderType: plain.orderType ?? 'NORMAL',
       _id: id,
       orderId: plain.orderId ?? id,
       orderNumber: plain.orderNumber,
@@ -860,6 +861,7 @@ export class OrdersService {
     const resolvedBranch = plain.branch ?? plain.customerBranch;
 
     return {
+      orderType: plain.orderType ?? 'NORMAL',
       _id: order._id.toString(),
       clientDraftId: plain.clientDraftId,
       idempotencyKey: plain.idempotencyKey,
@@ -897,6 +899,8 @@ export class OrdersService {
       taxInvoice: plain.taxInvoice,
       vatAmount: plain.vatAmount,
       grandTotal: plain.grandTotal,
+      receivedAmount: plain.receivedAmount,
+      changeAmount: plain.changeAmount,
       payments: plain.payments,
       statusHistory: plain.statusHistory ?? [],
       cart: plain.cart,

@@ -1,4 +1,4 @@
-import { OrderStatus, PaymentMethod } from '../orders.schema';
+import { OrderStatus, OrderType, PaymentMethod } from '../orders.schema';
 
 type OrderPaymentDto = {
   amount: number;
@@ -40,6 +40,7 @@ type OrderCartItemDto = {
 };
 
 export class OrderResponseDto {
+  orderType!: OrderType;
   _id!: string;
   clientDraftId?: string;
   idempotencyKey?: string;
@@ -77,6 +78,8 @@ export class OrderResponseDto {
   taxInvoice!: 'yes' | 'no';
   vatAmount!: number;
   grandTotal!: number;
+  receivedAmount?: number;
+  changeAmount?: number;
   payments!: OrderPaymentDto[];
   statusHistory!: {
     status: OrderStatus;

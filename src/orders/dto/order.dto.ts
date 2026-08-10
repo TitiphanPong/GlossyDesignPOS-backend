@@ -11,6 +11,8 @@ import {
   ValidateNested,
 } from 'class-validator';
 import {
+  ORDER_TYPES,
+  OrderType,
   ORDER_STATUSES,
   OrderStatus,
   PAYMENT_METHODS,
@@ -239,6 +241,10 @@ export class OrderItemDto {
 
 export class CreateOrderDto {
   @IsOptional()
+  @IsIn(ORDER_TYPES)
+  orderType?: OrderType;
+
+  @IsOptional()
   @IsString()
   clientDraftId?: string;
 
@@ -397,6 +403,18 @@ export class CreateOrderDto {
   @IsNumber()
   @Min(0)
   vatAmount?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  receivedAmount?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  changeAmount?: number;
 
   @IsArray()
   @ValidateNested({ each: true })
