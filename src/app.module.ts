@@ -6,6 +6,7 @@ import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { validateEnv } from './config/env.validation';
 import { OrdersModule } from './orders/orders.module';
 import { ProductModule } from './products/product.module';
+import { QuickProductModule } from './quick-products/quick-product.module';
 import { UploadsModule } from './uploads/uploads.module';
 import { HealthController } from './health.controller';
 
@@ -26,6 +27,7 @@ import { HealthController } from './health.controller';
     UploadsModule,
     OrdersModule,
     ProductModule,
+    QuickProductModule,
   ],
   controllers: [HealthController],
   providers: [
