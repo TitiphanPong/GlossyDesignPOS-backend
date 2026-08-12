@@ -17,7 +17,6 @@ describe('OrdersController (e2e)', () => {
 
   const updateOrder = jest.fn();
   const updateStatus = jest.fn();
-  const trackOrder = jest.fn();
   const create = jest.fn();
 
   beforeAll(async () => {
@@ -32,7 +31,6 @@ describe('OrdersController (e2e)', () => {
             getSummary: jest.fn(),
             findLatestActive: jest.fn(),
             updateStatus,
-            trackOrder,
             findByOrderId: jest.fn(),
             findById: jest.fn(),
             updateOrder,
@@ -69,7 +67,6 @@ describe('OrdersController (e2e)', () => {
   beforeEach(() => {
     updateOrder.mockReset();
     updateStatus.mockReset();
-    trackOrder.mockReset();
     create.mockReset();
   });
 
@@ -319,31 +316,5 @@ describe('OrdersController (e2e)', () => {
     expect(updateOrder).toHaveBeenCalledWith('61a1c287e53a7024d4ab81425', {
       status: 'ready_for_pickup',
     });
-  });
-
-  it('GET /orders/track searches by q', async () => {
-    trackOrder.mockResolvedValue({
-      data: [
-        {
-          _id: '61a1c287e53a7024d4ab81425',
-          orderId: '61a1c287e53a7024d4ab81425',
-          orderNumber: 'GL-20260604-0001',
-          status: 'pending',
-        },
-      ],
-      total: 1,
-    });
-
-    await request(server)
-      .get('/orders/track')
-      .query({ q: 'GL-20260604-0001' })
-      .expect(200)
-      .expect(
-        ({ body }: { body: { data: Array<Record<string, unknown>> } }) => {
-          expect(body.data[0].orderNumber).toBe('GL-20260604-0001');
-        },
-      );
-
-    expect(trackOrder).toHaveBeenCalledWith('GL-20260604-0001');
   });
 });

@@ -19,6 +19,7 @@ import {
 } from './orders.schema';
 import { OrdersSseService } from './orders.sse.service';
 import { CreateOrderDto } from './dto/order.dto';
+import { PublicTrackingResponseDto } from '../tracking/dto/tracking-lookup.dto';
 
 type AggregateTotal = { _id: null; total: number };
 type OrderPlainObject = Order & {
@@ -30,8 +31,6 @@ type CreateOrderIdentity = {
   clientDraftId?: string;
   idempotencyKey?: string;
 };
-
-const REGEX_SPECIAL_CHARS = /[.*+?^${}()|[\]\\]/g;
 
 @Injectable()
 export class OrdersService {
@@ -99,30 +98,6 @@ export class OrdersService {
       .sort({ updatedAt: -1 })
       .exec();
     return order ? this.toOrderResponse(order) : null;
-  }
-
-  async trackOrder(
-    query?: string,
-  ): Promise<{ data: Record<string, unknown>[]; total: number }> {
-    const q = query?.trim();
-    if (!q) {
-      throw new BadRequestException('q is required.');
-    }
-    const pattern = this.toSafePartialRegex(q);
-
-    const rows = await this.orderModel
-      .find({
-        $or: [
-          { orderNumber: { $regex: pattern, $options: 'i' } },
-          { orderId: { $regex: pattern, $options: 'i' } },
-          { phoneNumber: { $regex: pattern, $options: 'i' } },
-        ],
-      })
-      .sort({ createdAt: -1 })
-      .limit(10)
-      .exec();
-    const data = rows.map((order) => this.toTrackingResponse(order));
-    return { data, total: data.length };
   }
 
   async updateStatus(
@@ -355,58 +330,26 @@ export class OrdersService {
     return response;
   }
 
-  async findTrackingByOrderNumber(
+  async lookupPublicTracking(
     orderNumber: string,
-  ): Promise<Record<string, unknown> | null> {
+    phoneSuffix: string,
+  ): Promise<PublicTrackingResponseDto | null> {
+    const normalizedOrderNumber = orderNumber.trim();
     const order = await this.orderModel
-      .findOne({ $or: [{ orderNumber }, { orderId: orderNumber }] })
+      .findOne({ orderNumber: normalizedOrderNumber })
+      .select('orderNumber phoneNumber status createdAt updatedAt')
       .exec();
-    return order ? this.toTrackingResponse(order) : null;
-  }
 
-  async searchTracking(query: {
-    orderNumber?: string;
-    phone?: string;
-    q?: string;
-  }): Promise<{ data: Record<string, unknown>[]; total: number }> {
-    const filter: Record<string, unknown> = {};
-    const or: Record<string, unknown>[] = [];
-    if (query.q?.trim()) {
-      const pattern = this.toSafePartialRegex(query.q);
-      or.push(
-        { orderNumber: { $regex: pattern, $options: 'i' } },
-        { orderId: { $regex: pattern, $options: 'i' } },
-        { phoneNumber: { $regex: pattern, $options: 'i' } },
-      );
-    }
-    if (query.orderNumber?.trim()) {
-      const pattern = this.toSafePartialRegex(query.orderNumber);
-      or.push(
-        { orderNumber: { $regex: pattern, $options: 'i' } },
-        { orderId: { $regex: pattern, $options: 'i' } },
-      );
-    }
-    if (query.phone?.trim()) {
-      filter.phoneNumber = {
-        $regex: this.toSafePartialRegex(query.phone),
-        $options: 'i',
-      };
-    }
-    if (or.length) {
-      filter.$or = or;
-    }
+    const normalizedPhone = order?.phoneNumber?.replace(/\D/g, '') ?? '';
+    if (!order || !normalizedPhone.endsWith(phoneSuffix)) return null;
 
-    if (!Object.keys(filter).length) {
-      throw new BadRequestException('q, orderNumber, or phone is required.');
-    }
-
-    const rows = await this.orderModel
-      .find(filter)
-      .sort({ createdAt: -1 })
-      .limit(10)
-      .exec();
-    const data = rows.map((order) => this.toTrackingResponse(order));
-    return { data, total: data.length };
+    const plain = order.toObject() as OrderPlainObject;
+    return {
+      orderNumber: plain.orderNumber ?? normalizedOrderNumber,
+      status: plain.status,
+      createdAt: plain.createdAt,
+      updatedAt: plain.updatedAt,
+    };
   }
 
   async updateCustomerInfo(
@@ -534,10 +477,6 @@ export class OrdersService {
     return this.orderModel
       .findOne({ idempotencyKey: identity.idempotencyKey })
       .exec();
-  }
-
-  private toSafePartialRegex(value: string): string {
-    return value.trim().replace(REGEX_SPECIAL_CHARS, String.raw`\$&`);
   }
 
   private isDuplicateOrderNumberError(error: unknown): boolean {
@@ -766,75 +705,6 @@ export class OrdersService {
       vatAmount,
       cart,
     };
-  }
-
-  private toTrackingResponse(order: OrderDocument): Record<string, unknown> {
-    const plain = order.toObject() as OrderPlainObject;
-    const id = order._id.toString();
-
-    return {
-      orderType: plain.orderType ?? 'NORMAL',
-      _id: id,
-      orderId: plain.orderId ?? id,
-      orderNumber: plain.orderNumber,
-      status: plain.status,
-      customerName: plain.customerName,
-      phoneNumber: plain.phoneNumber
-        ? this.maskPhone(plain.phoneNumber)
-        : undefined,
-      phone: plain.phoneNumber ? this.maskPhone(plain.phoneNumber) : undefined,
-      total: plain.total,
-      createdAt: plain.createdAt,
-      updatedAt: plain.updatedAt,
-      cart: (plain.cart ?? []).map((item) => ({
-        name: item.name,
-        category: item.category,
-        variantName: item.variantName,
-        variant: item.variant,
-        qty: item.qty,
-        quantity: item.qty,
-        price: item.unitPrice,
-        unitPrice: item.unitPrice,
-        totalPrice: item.totalPrice,
-        lineTotal: item.lineTotal ?? item.totalPrice,
-        sides: item.sides,
-        material: item.material,
-        colorMode: item.colorMode,
-        type: item.type,
-        typePremium: item.typePremium,
-        shape: item.shape,
-        size: item.size,
-        setCount: item.setCount,
-        inkjetType: item.inkjetType,
-        sizeFlex: item.sizeFlex,
-        stickerPVCType: item.stickerPVCType,
-        plotPlanType: item.plotPlanType,
-        deposit: item.deposit,
-        remaining: item.remaining,
-        fullPayment: item.fullPayment,
-        note: item.note ?? item.productNote,
-        productNote: item.productNote,
-      })),
-      items: (plain.cart ?? []).map((item) => ({
-        name: item.name,
-        category: item.category,
-        variantName: item.variantName,
-        qty: item.qty,
-      })),
-      grandTotal: plain.grandTotal ?? plain.total,
-      paidAmount: plain.paidAmount ?? plain.depositTotal ?? 0,
-      remainingTotal: plain.remainingTotal,
-      statusHistory: plain.statusHistory ?? [],
-      estimatedReadyAt: (plain as { estimatedReadyAt?: Date }).estimatedReadyAt,
-    };
-  }
-
-  private maskPhone(phone: string): string {
-    const digits = phone.trim();
-    if (digits.length <= 4) {
-      return '****';
-    }
-    return `${'*'.repeat(digits.length - 4)}${digits.slice(-4)}`;
   }
 
   private emitForStatus(response: OrderResponseDto, status: OrderStatus): void {
