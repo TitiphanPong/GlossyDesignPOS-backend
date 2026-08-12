@@ -9,6 +9,7 @@ import {
   Post,
   Query,
   Sse,
+  Request,
 } from '@nestjs/common';
 import { Observable } from 'rxjs';
 import { OrdersService } from './orders.service';
@@ -20,20 +21,31 @@ import {
   CreateOrderDto,
   UpdateOrderStatusDto,
 } from './dto/order.dto';
+import { AuditService } from '../auth/audit.service';
+import { AuthenticatedUser } from '../auth/auth.types';
+
+type AuthRequest = { user?: AuthenticatedUser };
 
 @Controller('orders')
 export class OrdersController {
   constructor(
     private readonly ordersService: OrdersService,
     private readonly ordersSse: OrdersSseService,
+    private readonly auditService: AuditService,
   ) {}
 
   @Post()
   async create(
     @Body() order: CreateOrderDto,
+    @Request() request: AuthRequest,
     @Headers('idempotency-key') idempotencyKey?: string,
   ): Promise<OrderResponseDto> {
-    return this.ordersService.create(order, idempotencyKey);
+    const created = await this.ordersService.create(order, idempotencyKey);
+    await this.auditService.record(request.user ?? null, 'order.create', {
+      type: 'order',
+      id: created._id,
+    });
+    return created;
   }
 
   @Get()
@@ -71,8 +83,20 @@ export class OrdersController {
   async updateStatus(
     @Param('id') id: string,
     @Body() body: UpdateOrderStatusDto,
+    @Request() request: AuthRequest,
   ) {
-    return this.ordersService.updateStatus(id, body.status, body.statusNote);
+    const updated = await this.ordersService.updateStatus(
+      id,
+      body.status,
+      body.statusNote,
+    );
+    await this.auditService.record(
+      request.user ?? null,
+      'order.status.update',
+      { type: 'order', id },
+      { status: body.status },
+    );
+    return updated;
   }
 
   @Get('by-order-id/:orderId')
@@ -89,22 +113,43 @@ export class OrdersController {
   async updateCustomerInfo(
     @Param('id') id: string,
     @Body() body: UpdateOrderCustomerDto,
+    @Request() request: AuthRequest,
   ): Promise<OrderResponseDto> {
-    return this.ordersService.updateOrder(id, body);
+    const updated = await this.ordersService.updateOrder(id, body);
+    await this.auditService.record(request.user ?? null, 'order.update', {
+      type: 'order',
+      id,
+    });
+    return updated;
   }
 
   @Post(':id/payments')
-  async addPayment(@Param('id') id: string, @Body() body: AddPaymentDto) {
-    return this.ordersService.addPayment(
+  async addPayment(
+    @Param('id') id: string,
+    @Body() body: AddPaymentDto,
+    @Request() request: AuthRequest,
+  ) {
+    const updated = await this.ordersService.addPayment(
       id,
       body.amount,
       body.method,
       body.note,
     );
+    await this.auditService.record(
+      request.user ?? null,
+      'order.payment.add',
+      { type: 'order', id },
+      { amount: body.amount, method: body.method },
+    );
+    return updated;
   }
 
   @Patch(':id/payments')
-  async addPaymentLegacy(@Param('id') id: string, @Body() body: AddPaymentDto) {
-    return this.addPayment(id, body);
+  async addPaymentLegacy(
+    @Param('id') id: string,
+    @Body() body: AddPaymentDto,
+    @Request() request: AuthRequest,
+  ) {
+    return this.addPayment(id, body, request);
   }
 }

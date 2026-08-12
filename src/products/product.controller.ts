@@ -8,6 +8,7 @@ import {
   Patch,
   Post,
   Query,
+  Request,
 } from '@nestjs/common';
 import {
   CreateProductDto,
@@ -16,10 +17,17 @@ import {
 } from './dto/product.dto';
 import { ProductService } from './product.service';
 import { Roles } from '../auth/auth.decorators';
+import { AuditService } from '../auth/audit.service';
+import { AuthenticatedUser } from '../auth/auth.types';
+
+type AuthRequest = { user?: AuthenticatedUser };
 
 @Controller('products')
 export class ProductController {
-  constructor(private readonly productService: ProductService) {}
+  constructor(
+    private readonly productService: ProductService,
+    private readonly auditService: AuditService,
+  ) {}
 
   @Get()
   findAll(@Query() query: ListProductsQueryDto) {
@@ -33,19 +41,41 @@ export class ProductController {
 
   @Post()
   @Roles('manager', 'admin')
-  create(@Body() body: CreateProductDto) {
-    return this.productService.create(body);
+  async create(
+    @Body() body: CreateProductDto,
+    @Request() request: AuthRequest,
+  ) {
+    const product = await this.productService.create(body);
+    await this.auditService.record(request.user ?? null, 'product.create', {
+      type: 'product',
+      id: product.code,
+    });
+    return product;
   }
 
   @Patch(':id')
   @Roles('manager', 'admin')
-  update(@Param('id') id: string, @Body() body: UpdateProductDto) {
-    return this.productService.update(id, body);
+  async update(
+    @Param('id') id: string,
+    @Body() body: UpdateProductDto,
+    @Request() request: AuthRequest,
+  ) {
+    const product = await this.productService.update(id, body);
+    await this.auditService.record(request.user ?? null, 'product.update', {
+      type: 'product',
+      id: product.code,
+    });
+    return product;
   }
 
   @Delete(':id')
   @Roles('admin')
-  delete(@Param('id') id: string) {
-    return this.productService.delete(id);
+  async delete(@Param('id') id: string, @Request() request: AuthRequest) {
+    const product = await this.productService.delete(id);
+    await this.auditService.record(request.user ?? null, 'product.delete', {
+      type: 'product',
+      id: product.code,
+    });
+    return product;
   }
 }

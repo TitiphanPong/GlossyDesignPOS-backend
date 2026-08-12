@@ -6,6 +6,7 @@ import { UploadsController } from '../src/uploads/uploads.controller';
 import { UploadsService } from '../src/uploads/uploads.service';
 import { HttpExceptionFilter } from '../src/common/filters/http-exception.filter';
 import { JobType, UploadStage } from '../src/uploads/uploads.enums';
+import { AuditService } from '../src/auth/audit.service';
 
 describe('UploadsController (e2e)', () => {
   let app: INestApplication;
@@ -36,6 +37,7 @@ describe('UploadsController (e2e)', () => {
             getSignedUrlById,
           },
         },
+        { provide: AuditService, useValue: { record: jest.fn() } },
       ],
     }).compile();
 

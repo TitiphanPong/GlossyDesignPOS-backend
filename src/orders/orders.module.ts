@@ -7,9 +7,11 @@ import { Counter, CounterSchema } from '../counters/counters.schema';
 import { OrdersSseService } from './orders.sse.service';
 import { RunningNumberService } from '../counters/running-number.service';
 import { TrackingController } from '../tracking/tracking.controller';
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
   imports: [
+    AuthModule,
     MongooseModule.forFeature([
       { name: Order.name, schema: OrderSchema },
       { name: Counter.name, schema: CounterSchema },

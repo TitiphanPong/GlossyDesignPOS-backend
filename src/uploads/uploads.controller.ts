@@ -11,6 +11,7 @@ import {
   Post,
   UploadedFiles,
   UseInterceptors,
+  Request,
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
@@ -25,10 +26,17 @@ import {
   validateUploadedFiles,
 } from './validators/upload-file.validator';
 import { Public, Roles } from '../auth/auth.decorators';
+import { AuditService } from '../auth/audit.service';
+import { AuthenticatedUser } from '../auth/auth.types';
+
+type AuthRequest = { user?: AuthenticatedUser };
 
 @Controller(['uploads', 'upload'])
 export class UploadsController {
-  constructor(private readonly uploadsService: UploadsService) {}
+  constructor(
+    private readonly uploadsService: UploadsService,
+    private readonly auditService: AuditService,
+  ) {}
 
   @Get()
   async listUploads(@Query() query: ListUploadsQueryDto) {
@@ -69,21 +77,33 @@ export class UploadsController {
   }
 
   @Patch(':id')
-  async updateUpload(@Param('id') id: string, @Body() dto: UpdateUploadDto) {
+  async updateUpload(
+    @Param('id') id: string,
+    @Body() dto: UpdateUploadDto,
+    @Request() request: AuthRequest,
+  ) {
     const updated = await this.uploadsService.updateUploadById(id, dto);
     if (!updated) {
       throw new NotFoundException('Upload not found');
     }
+    await this.auditService.record(request.user ?? null, 'upload.update', {
+      type: 'upload',
+      id,
+    });
     return updated;
   }
 
   @Delete(':id')
   @Roles('manager', 'admin')
-  async deleteUpload(@Param('id') id: string) {
+  async deleteUpload(@Param('id') id: string, @Request() request: AuthRequest) {
     const deleted = await this.uploadsService.deleteUploadById(id);
     if (!deleted) {
       throw new NotFoundException('Upload not found');
     }
+    await this.auditService.record(request.user ?? null, 'upload.delete', {
+      type: 'upload',
+      id,
+    });
     return { message: 'Upload deleted' };
   }
 }

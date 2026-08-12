@@ -9,6 +9,7 @@ import { HttpExceptionFilter } from '../src/common/filters/http-exception.filter
 import { OrdersController } from '../src/orders/orders.controller';
 import { OrdersService } from '../src/orders/orders.service';
 import { OrdersSseService } from '../src/orders/orders.sse.service';
+import { AuditService } from '../src/auth/audit.service';
 
 describe('OrdersController (e2e)', () => {
   let app: INestApplication;
@@ -44,6 +45,7 @@ describe('OrdersController (e2e)', () => {
             asObservable: jest.fn(),
           },
         },
+        { provide: AuditService, useValue: { record: jest.fn() } },
       ],
     }).compile();
 
