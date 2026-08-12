@@ -46,6 +46,16 @@ class EnvironmentVariables {
   MONGODB_URI: string;
 
   @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  ADMIN_LOGIN_USERNAME?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  ADMIN_LOGIN_PASSWORD?: string;
+
+  @IsOptional()
   @IsIn(['development', 'test', 'production'])
   NODE_ENV?: string;
 }
@@ -63,6 +73,15 @@ export function validateEnv(
 
   if (errors.length > 0) {
     throw new Error(`Config validation error: ${errors.toString()}`);
+  }
+
+  if (
+    Boolean(validatedConfig.ADMIN_LOGIN_USERNAME) !==
+    Boolean(validatedConfig.ADMIN_LOGIN_PASSWORD)
+  ) {
+    throw new Error(
+      'Config validation error: ADMIN_LOGIN_USERNAME and ADMIN_LOGIN_PASSWORD must be provided together',
+    );
   }
 
   return validatedConfig;

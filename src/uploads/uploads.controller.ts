@@ -24,6 +24,7 @@ import {
   MAX_FILE_SIZE_BYTES,
   validateUploadedFiles,
 } from './validators/upload-file.validator';
+import { Public, Roles } from '../auth/auth.decorators';
 
 @Controller(['uploads', 'upload'])
 export class UploadsController {
@@ -35,6 +36,7 @@ export class UploadsController {
   }
 
   @Post()
+  @Public()
   @Throttle({ default: { ttl: 60_000, limit: 20 } })
   @UseInterceptors(
     FilesInterceptor('files', 10, {
@@ -76,6 +78,7 @@ export class UploadsController {
   }
 
   @Delete(':id')
+  @Roles('manager', 'admin')
   async deleteUpload(@Param('id') id: string) {
     const deleted = await this.uploadsService.deleteUploadById(id);
     if (!deleted) {

@@ -6,8 +6,10 @@ import {
   Query,
 } from '@nestjs/common';
 import { OrdersService } from '../orders/orders.service';
+import { Public } from '../auth/auth.decorators';
 
 @Controller('tracking')
+@Public()
 export class TrackingController {
   constructor(private readonly ordersService: OrdersService) {}
 

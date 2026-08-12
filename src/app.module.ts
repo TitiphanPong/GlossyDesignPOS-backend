@@ -9,6 +9,8 @@ import { ProductModule } from './products/product.module';
 import { QuickProductModule } from './quick-products/quick-product.module';
 import { UploadsModule } from './uploads/uploads.module';
 import { HealthController } from './health.controller';
+import { AuthModule } from './auth/auth.module';
+import { AuthGuard } from './auth/auth.guard';
 
 @Module({
   imports: [
@@ -24,6 +26,7 @@ import { HealthController } from './health.controller';
       },
     ]),
     MongooseModule.forRoot(process.env.MONGODB_URI as string),
+    AuthModule,
     UploadsModule,
     OrdersModule,
     ProductModule,
@@ -34,6 +37,10 @@ import { HealthController } from './health.controller';
     {
       provide: APP_GUARD,
       useClass: ThrottlerGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: AuthGuard,
     },
   ],
 })
