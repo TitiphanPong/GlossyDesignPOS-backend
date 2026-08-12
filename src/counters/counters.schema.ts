@@ -2,7 +2,8 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument } from 'mongoose';
 
 export const COUNTER_TYPE_ORDER = 'ORDER' as const;
-export type CounterType = typeof COUNTER_TYPE_ORDER;
+export const COUNTER_TYPE_TAX_INVOICE = 'TAX_INVOICE' as const;
+export type CounterType = typeof COUNTER_TYPE_ORDER | typeof COUNTER_TYPE_TAX_INVOICE;
 export type CounterDocument = HydratedDocument<Counter>;
 
 @Schema({
@@ -11,7 +12,7 @@ export type CounterDocument = HydratedDocument<Counter>;
   timestamps: false,
 })
 export class Counter {
-  @Prop({ required: true, enum: [COUNTER_TYPE_ORDER] })
+  @Prop({ required: true, enum: [COUNTER_TYPE_ORDER, COUNTER_TYPE_TAX_INVOICE] })
   type!: CounterType;
 
   @Prop({ required: true, min: 2000 })

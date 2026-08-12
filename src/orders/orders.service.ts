@@ -465,8 +465,11 @@ export class OrdersService {
     orderDto: CreateOrderDto,
     identity: CreateOrderIdentity,
   ): Promise<OrderResponseDto> {
-    const orderNumber = await this.runningNumberService.generateOrderNumber();
     const normalizedOrder = this.normalizeOrderForCreate(orderDto);
+    const orderNumber = await this.runningNumberService.generateOrderNumber();
+    const invoiceNumber = normalizedOrder.taxInvoice === 'yes'
+      ? await this.runningNumberService.generateTaxInvoiceNumber()
+      : undefined;
     const status = normalizedOrder.status ?? 'pending';
     const createdOrder = new this.orderModel({
       ...normalizedOrder,
@@ -477,6 +480,7 @@ export class OrdersService {
         ? { idempotencyKey: identity.idempotencyKey }
         : {}),
       orderNumber,
+      ...(invoiceNumber ? { invoiceNumber } : {}),
       status,
       statusHistory: [{ status, changedAt: new Date() }],
     });
@@ -742,6 +746,7 @@ export class OrdersService {
       ...orderDto,
       orderId: undefined,
       orderNumber: undefined,
+      invoiceNumber: undefined,
       customerName: orderDto.customerName ?? '',
       phoneNumber: orderDto.phoneNumber ?? orderDto.phone ?? '',
       email: orderDto.email ?? orderDto.customerEmail,
@@ -777,6 +782,7 @@ export class OrdersService {
       _id: id,
       orderId: plain.orderId ?? id,
       orderNumber: plain.orderNumber,
+      invoiceNumber: plain.invoiceNumber,
       status: plain.status,
       customerName: plain.customerName,
       phoneNumber: plain.phoneNumber
@@ -867,6 +873,7 @@ export class OrdersService {
       idempotencyKey: plain.idempotencyKey,
       orderId: plain.orderId ?? order._id.toString(),
       orderNumber: plain.orderNumber,
+      invoiceNumber: plain.invoiceNumber,
       customerName: plain.customerName,
       companyName: plain.companyName,
       phoneNumber: plain.phoneNumber,

@@ -46,6 +46,7 @@ export class OrderResponseDto {
   idempotencyKey?: string;
   orderId!: string;
   orderNumber?: string;
+  invoiceNumber?: string;
   customerName!: string;
   companyName?: string;
   phoneNumber!: string;

@@ -5,6 +5,7 @@ import {
   Counter,
   CounterDocument,
   COUNTER_TYPE_ORDER,
+  COUNTER_TYPE_TAX_INVOICE,
 } from './counters.schema';
 
 @Injectable()
@@ -35,6 +36,19 @@ export class RunningNumberService {
     }
 
     return `GD-${year}-${counter.seq.toString().padStart(6, '0')}`;
+  }
+
+  async generateTaxInvoiceNumber(now: Date = new Date()): Promise<string> {
+    const year = this.getYear(now);
+    const counter = await this.counterModel.findOneAndUpdate(
+      { type: COUNTER_TYPE_TAX_INVOICE, year },
+      { $inc: { seq: 1 }, $setOnInsert: { type: COUNTER_TYPE_TAX_INVOICE, year } },
+      { new: true, upsert: true },
+    );
+    if (!counter) {
+      throw new InternalServerErrorException('Failed to generate tax invoice number.');
+    }
+    return `INV-${year}-${counter.seq.toString().padStart(6, '0')}`;
   }
 
   private getYear(date: Date): number {

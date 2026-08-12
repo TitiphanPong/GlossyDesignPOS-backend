@@ -35,6 +35,9 @@ export class Order {
   @Prop({ unique: true, sparse: true })
   orderNumber?: string;
 
+  @Prop({ unique: true, sparse: true })
+  invoiceNumber?: string;
+
   @Prop()
   customerName!: string;
 
