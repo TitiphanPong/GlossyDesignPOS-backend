@@ -16,7 +16,7 @@ export class CreateUserDto {
   username: string;
 
   @IsString()
-  @MinLength(12)
+  @MinLength(6)
   @MaxLength(200)
   password: string;
 
@@ -27,7 +27,7 @@ export class CreateUserDto {
 export class UpdateUserDto {
   @IsOptional()
   @IsString()
-  @MinLength(12)
+  @MinLength(6)
   @MaxLength(200)
   password?: string;
 

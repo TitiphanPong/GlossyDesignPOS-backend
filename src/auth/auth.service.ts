@@ -140,12 +140,12 @@ export class AuthService implements OnModuleInit {
   }
 
   async listUsers() {
-    return this.userModel
+    const users = await this.userModel
       .find()
       .select('username role active lastLoginAt createdAt updatedAt')
       .sort({ username: 1 })
-      .lean()
       .exec();
+    return users.map((user) => this.toUserResponse(user));
   }
 
   async createUser(dto: CreateUserDto, actor: AuthenticatedUser) {
