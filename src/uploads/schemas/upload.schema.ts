@@ -83,3 +83,5 @@ export class Upload {
 }
 
 export const UploadSchema = SchemaFactory.createForClass(Upload);
+
+UploadSchema.index({ createdAt: -1, status: 1 });
