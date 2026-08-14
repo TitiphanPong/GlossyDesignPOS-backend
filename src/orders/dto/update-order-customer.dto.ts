@@ -21,7 +21,6 @@ export class UpdateOrderCustomerDto {
   @MaxLength(255)
   companyName?: string;
 
-  // Accepted for frontend compatibility, but intentionally ignored by the service.
   @IsOptional()
   @IsString()
   @MaxLength(50)

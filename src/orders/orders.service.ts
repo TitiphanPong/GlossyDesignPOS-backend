@@ -179,6 +179,10 @@ export class OrdersService {
       ? this.buildCustomerInfoUpdate(customerFields)
       : {};
 
+    if (hasCustomerFields) {
+      update.orderType = 'NORMAL';
+    }
+
     if (status !== undefined) {
       update.status = status;
     }
@@ -587,6 +591,10 @@ export class OrdersService {
 
     if (updateDto.companyName !== undefined) {
       update.companyName = updateDto.companyName;
+    }
+
+    if (updateDto.phoneNumber !== undefined) {
+      update.phoneNumber = updateDto.phoneNumber;
     }
 
     const email = this.resolveMirroredField(
