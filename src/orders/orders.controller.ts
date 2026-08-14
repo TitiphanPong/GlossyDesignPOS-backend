@@ -2,6 +2,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Headers,
   Param,
@@ -23,6 +24,8 @@ import {
 } from './dto/order.dto';
 import { AuditService } from '../auth/audit.service';
 import { AuthenticatedUser } from '../auth/auth.types';
+import { AuthService } from '../auth/auth.service';
+import { DeleteOrderDto } from './dto/delete-order.dto';
 
 type AuthRequest = { user?: AuthenticatedUser };
 
@@ -32,6 +35,7 @@ export class OrdersController {
     private readonly ordersService: OrdersService,
     private readonly ordersSse: OrdersSseService,
     private readonly auditService: AuditService,
+    private readonly authService: AuthService,
   ) {}
 
   @Post()
@@ -121,6 +125,20 @@ export class OrdersController {
       id,
     });
     return updated;
+  }
+
+  @Delete(':id')
+  async deleteOrder(
+    @Param('id') id: string,
+    @Body() body: DeleteOrderDto,
+    @Request() request: AuthRequest,
+  ): Promise<OrderResponseDto> {
+    const actor = request.user;
+    if (!actor) throw new Error('Authenticated user is required');
+    await this.authService.confirmPassword(actor.id, body.password);
+    const deleted = await this.ordersService.deleteOrder(id);
+    await this.auditService.record(actor, 'order.delete', { type: 'order', id }, { orderNumber: deleted.orderNumber ?? deleted.orderId });
+    return deleted;
   }
 
   @Post(':id/payments')

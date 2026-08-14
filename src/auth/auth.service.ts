@@ -129,6 +129,13 @@ export class AuthService implements OnModuleInit {
     return user ? this.toAuthenticatedUser(user) : null;
   }
 
+  async confirmPassword(userId: string, password: string): Promise<void> {
+    const user = await this.userModel.findById(userId).select('+passwordHash').exec();
+    if (!user || !user.active || !(await this.verifyPassword(password, user.passwordHash))) {
+      throw new UnauthorizedException('Invalid password');
+    }
+  }
+
   async logout(accessToken: string, actor: AuthenticatedUser): Promise<void> {
     await this.sessionModel
       .updateOne(

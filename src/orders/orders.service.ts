@@ -219,6 +219,15 @@ export class OrdersService {
     return response;
   }
 
+  async deleteOrder(id: string): Promise<OrderResponseDto> {
+    this.assertMongoObjectId(id, 'order id');
+    const deleted = await this.orderModel.findByIdAndDelete(id).exec();
+    if (!deleted) {
+      throw new NotFoundException(`Order not found for id "${id}".`);
+    }
+    return this.toOrderResponse(deleted);
+  }
+
   async getSummary() {
     const startOfDay = new Date(new Date().setHours(0, 0, 0, 0));
 
