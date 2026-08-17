@@ -219,6 +219,41 @@ export class OrdersService {
     return response;
   }
 
+  async convertToTaxInvoice(id: string): Promise<OrderResponseDto> {
+    this.assertMongoObjectId(id, 'order id');
+    const existing = await this.orderModel.findById(id).exec();
+    if (!existing) {
+      throw new NotFoundException(`Order not found for id "${id}".`);
+    }
+    const storedSubtotal = Number(existing.subtotal) || Number(existing.total) || 0;
+    const taxableAmount = Math.max(0, storedSubtotal - (Number(existing.discount) || 0));
+    const vatAmount = Math.round(taxableAmount * 0.07 * 100) / 100;
+    const grandTotal = Math.round((taxableAmount + vatAmount) * 100) / 100;
+    if (existing.taxInvoice === 'yes' && Number(existing.grandTotal) === grandTotal && Number(existing.vatAmount) === vatAmount) {
+      return this.toOrderResponse(existing);
+    }
+
+    const invoiceNumber = existing.invoiceNumber ?? await this.runningNumberService.generateTaxInvoiceNumber();
+    const paidAmount = Number(existing.paidAmount) || 0;
+    const remainingTotal = Math.max(0, Math.round((grandTotal - paidAmount) * 100) / 100);
+    const status = remainingTotal > 0 && paidAmount > 0 ? 'partial' : existing.status;
+    const updated = await this.orderModel.findOneAndUpdate(
+      { _id: id },
+      { $set: { taxInvoice: 'yes', invoiceNumber, vatAmount, grandTotal, remainingTotal, status } },
+      { new: true, runValidators: true },
+    ).exec();
+
+    if (!updated) {
+      const latest = await this.orderModel.findById(id).exec();
+      if (!latest) throw new NotFoundException(`Order not found for id "${id}".`);
+      return this.toOrderResponse(latest);
+    }
+
+    const response = this.toOrderResponse(updated);
+    this.ordersSse.emitOrder(response);
+    return response;
+  }
+
   async deleteOrder(id: string): Promise<OrderResponseDto> {
     this.assertMongoObjectId(id, 'order id');
     const deleted = await this.orderModel.findByIdAndDelete(id).exec();

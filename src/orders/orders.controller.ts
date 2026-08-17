@@ -127,6 +127,21 @@ export class OrdersController {
     return updated;
   }
 
+  @Post(':id/tax-invoice')
+  async convertToTaxInvoice(
+    @Param('id') id: string,
+    @Request() request: AuthRequest,
+  ): Promise<OrderResponseDto> {
+    const updated = await this.ordersService.convertToTaxInvoice(id);
+    await this.auditService.record(
+      request.user ?? null,
+      'order.tax_invoice.create',
+      { type: 'order', id },
+      { invoiceNumber: updated.invoiceNumber ?? '' },
+    );
+    return updated;
+  }
+
   @Delete(':id')
   async deleteOrder(
     @Param('id') id: string,
