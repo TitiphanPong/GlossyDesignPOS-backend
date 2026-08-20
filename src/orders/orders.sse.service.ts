@@ -6,6 +6,10 @@ interface ToObjectLike {
 }
 
 type CustomerEvent = { type: 'order'; payload: unknown } | { type: 'ping' };
+export type CustomerSsePayload =
+  | { type: 'ping'; ts: number }
+  | { type: 'order'; payload: Record<string, unknown> | null };
+export type CustomerSseMessage = { data: string };
 
 @Injectable()
 export class OrdersSseService implements OnModuleDestroy {
@@ -18,15 +22,9 @@ export class OrdersSseService implements OnModuleDestroy {
     this.stream$.complete();
   }
 
-  asObservable(): Observable<{ data: string }> {
+  asObservable(): Observable<CustomerSseMessage> {
     return merge(this.stream$, this.heartbeat$).pipe(
-      map((evt) => {
-        if (evt.type === 'ping') {
-          return { data: JSON.stringify({ type: 'ping', ts: Date.now() }) };
-        }
-
-        return { data: JSON.stringify(evt.payload ?? null) };
-      }),
+      map((evt) => ({ data: JSON.stringify(this.toPayload(evt)) })),
     );
   }
 
@@ -43,5 +41,18 @@ export class OrdersSseService implements OnModuleDestroy {
   emitOrderAndAutoClear(order: unknown, ms = 7000) {
     this.emitOrder(order);
     setTimeout(() => this.emitOrder(null), ms);
+  }
+
+  private toPayload(event: CustomerEvent): CustomerSsePayload {
+    if (event.type === 'ping') {
+      return { type: 'ping', ts: Date.now() };
+    }
+
+    const payload =
+      event.payload && typeof event.payload === 'object'
+        ? (event.payload as Record<string, unknown>)
+        : null;
+
+    return { type: 'order', payload };
   }
 }

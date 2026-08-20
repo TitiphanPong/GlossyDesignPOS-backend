@@ -14,7 +14,7 @@ import {
 } from '@nestjs/common';
 import { Observable } from 'rxjs';
 import { OrdersService } from './orders.service';
-import { OrdersSseService } from './orders.sse.service';
+import { CustomerSseMessage, OrdersSseService } from './orders.sse.service';
 import { OrderResponseDto } from './dto/order-response.dto';
 import { UpdateOrderCustomerDto } from './dto/update-order-customer.dto';
 import {
@@ -65,7 +65,7 @@ export class OrdersController {
 
   // ✅ SSE stream สำหรับหน้า Customer
   @Sse('events')
-  events(): Observable<any> {
+  events(): Observable<CustomerSseMessage> {
     return this.ordersSse.asObservable();
   }
 
@@ -175,12 +175,4 @@ export class OrdersController {
     return updated;
   }
 
-  @Patch(':id/payments')
-  async addPaymentLegacy(
-    @Param('id') id: string,
-    @Body() body: AddPaymentDto,
-    @Request() request: AuthRequest,
-  ) {
-    return this.addPayment(id, body, request);
-  }
 }

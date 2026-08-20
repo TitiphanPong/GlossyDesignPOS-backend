@@ -10,6 +10,10 @@ import { MongoServerError } from 'mongodb';
 import { FilterQuery, isValidObjectId, Model } from 'mongoose';
 import { RunningNumberService } from '../counters/running-number.service';
 import { OrderResponseDto } from './dto/order-response.dto';
+import {
+  TrackingOrderResponseDto,
+  TrackingSearchResponseDto,
+} from './dto/tracking-response.dto';
 import { UpdateOrderCustomerDto } from './dto/update-order-customer.dto';
 import { ListOrdersQueryDto } from './dto/list-orders-query.dto';
 import {
@@ -466,7 +470,7 @@ export class OrdersService {
 
   async findTrackingByOrderNumber(
     orderNumber: string,
-  ): Promise<Record<string, unknown> | null> {
+  ): Promise<TrackingOrderResponseDto | null> {
     const order = await this.orderModel
       .findOne({ $or: [{ orderNumber }, { orderId: orderNumber }] })
       .exec();
@@ -477,7 +481,7 @@ export class OrdersService {
     orderNumber?: string;
     phone?: string;
     q?: string;
-  }): Promise<{ data: Record<string, unknown>[]; total: number }> {
+  }): Promise<TrackingSearchResponseDto> {
     const filter: Record<string, unknown> = {};
     const or: Record<string, unknown>[] = [];
     if (query.q?.trim()) {
@@ -887,7 +891,7 @@ export class OrdersService {
     };
   }
 
-  private toTrackingResponse(order: OrderDocument): Record<string, unknown> {
+  private toTrackingResponse(order: OrderDocument): TrackingOrderResponseDto {
     const plain = order.toObject() as OrderPlainObject;
     const id = order._id.toString();
 
