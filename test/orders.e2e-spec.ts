@@ -1,6 +1,7 @@
 import {
   ValidationPipe,
   INestApplication,
+  BadRequestException,
   NotFoundException,
 } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
@@ -10,6 +11,7 @@ import { OrdersController } from '../src/orders/orders.controller';
 import { OrdersService } from '../src/orders/orders.service';
 import { OrdersSseService } from '../src/orders/orders.sse.service';
 import { AuditService } from '../src/auth/audit.service';
+import { AuthService } from '../src/auth/auth.service';
 
 describe('OrdersController (e2e)', () => {
   let app: INestApplication;
@@ -17,8 +19,9 @@ describe('OrdersController (e2e)', () => {
 
   const updateOrder = jest.fn();
   const updateStatus = jest.fn();
-  const trackOrder = jest.fn();
   const create = jest.fn();
+  const findAll = jest.fn();
+  const findById = jest.fn();
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -28,13 +31,12 @@ describe('OrdersController (e2e)', () => {
           provide: OrdersService,
           useValue: {
             create,
-            findAll: jest.fn(),
+            findAll,
             getSummary: jest.fn(),
             findLatestActive: jest.fn(),
             updateStatus,
-            trackOrder,
             findByOrderId: jest.fn(),
-            findById: jest.fn(),
+            findById,
             updateOrder,
             addPayment: jest.fn(),
           },
@@ -46,6 +48,7 @@ describe('OrdersController (e2e)', () => {
           },
         },
         { provide: AuditService, useValue: { record: jest.fn() } },
+        { provide: AuthService, useValue: { confirmPassword: jest.fn() } },
       ],
     }).compile();
 
@@ -69,8 +72,9 @@ describe('OrdersController (e2e)', () => {
   beforeEach(() => {
     updateOrder.mockReset();
     updateStatus.mockReset();
-    trackOrder.mockReset();
     create.mockReset();
+    findAll.mockReset();
+    findById.mockReset();
   });
 
   it('POST /orders accepts the current POS rich order payload', async () => {
@@ -321,8 +325,8 @@ describe('OrdersController (e2e)', () => {
     });
   });
 
-  it('GET /orders/track searches by q', async () => {
-    trackOrder.mockResolvedValue({
+  it('GET /orders returns a bounded paginated list', async () => {
+    findAll.mockResolvedValue({
       data: [
         {
           _id: '61a1c287e53a7024d4ab81425',
@@ -331,19 +335,76 @@ describe('OrdersController (e2e)', () => {
           status: 'pending',
         },
       ],
-      total: 1,
+      page: 2,
+      limit: 5,
+      total: 12,
     });
+
+    await request(server)
+      .get('/orders')
+      .query({ page: '2', limit: '5' })
+      .expect(200)
+      .expect(
+        ({
+          body,
+        }: {
+          body: {
+            data: Array<Record<string, unknown>>;
+            page: number;
+            limit: number;
+            total: number;
+          };
+        }) => {
+          expect(body.data[0].orderNumber).toBe('GL-20260604-0001');
+          expect(body.page).toBe(2);
+          expect(body.limit).toBe(5);
+          expect(body.total).toBe(12);
+        },
+      );
+
+    expect(findAll).toHaveBeenCalledWith({ page: 2, limit: 5 });
+  });
+
+  it('GET /orders rejects excessive list limits', async () => {
+    await request(server)
+      .get('/orders')
+      .query({ limit: '500' })
+      .expect(400)
+      .expect(({ body }: { body: { message: string | string[] } }) => {
+        expect(body.message).toEqual(
+          expect.arrayContaining(['limit must not be greater than 100']),
+        );
+      });
+
+    expect(findAll).not.toHaveBeenCalled();
+  });
+
+  it('GET /orders rejects legacy tracking q fallback', async () => {
+    await request(server)
+      .get('/orders')
+      .query({ q: 'GL-20260604-0001' })
+      .expect(400)
+      .expect(({ body }: { body: { message: string | string[] } }) => {
+        expect(body.message).toEqual(
+          expect.arrayContaining(['property q should not exist']),
+        );
+      });
+
+    expect(findAll).not.toHaveBeenCalled();
+    expect(findById).not.toHaveBeenCalled();
+  });
+
+  it('GET /orders/track no longer performs tracking search', async () => {
+    findById.mockRejectedValue(new BadRequestException('Invalid order id.'));
 
     await request(server)
       .get('/orders/track')
       .query({ q: 'GL-20260604-0001' })
-      .expect(200)
-      .expect(
-        ({ body }: { body: { data: Array<Record<string, unknown>> } }) => {
-          expect(body.data[0].orderNumber).toBe('GL-20260604-0001');
-        },
-      );
+      .expect(400)
+      .expect(({ body }: { body: { message: string } }) => {
+        expect(body.message).toBe('Invalid order id.');
+      });
 
-    expect(trackOrder).toHaveBeenCalledWith('GL-20260604-0001');
+    expect(findById).toHaveBeenCalledWith('track');
   });
 });

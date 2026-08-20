@@ -26,6 +26,7 @@ import { AuditService } from '../auth/audit.service';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { AuthService } from '../auth/auth.service';
 import { DeleteOrderDto } from './dto/delete-order.dto';
+import { ListOrdersQueryDto } from './dto/list-orders-query.dto';
 
 type AuthRequest = { user?: AuthenticatedUser };
 
@@ -53,11 +54,8 @@ export class OrdersController {
   }
 
   @Get()
-  async findAll(@Query('q') q?: string) {
-    if (q?.trim()) {
-      return this.ordersService.trackOrder(q);
-    }
-    return this.ordersService.findAll();
+  async findAll(@Query() query: ListOrdersQueryDto) {
+    return this.ordersService.findAll(query);
   }
 
   @Get('summary')
@@ -69,11 +67,6 @@ export class OrdersController {
   @Sse('events')
   events(): Observable<any> {
     return this.ordersSse.asObservable();
-  }
-
-  @Get('track')
-  async track(@Query('q') q?: string) {
-    return this.ordersService.trackOrder(q);
   }
 
   // (ตัวเลือก) Endpoint ดึงออเดอร์ล่าสุดที่เป็น active (pending/paid)
@@ -152,7 +145,12 @@ export class OrdersController {
     if (!actor) throw new Error('Authenticated user is required');
     await this.authService.confirmPassword(actor.id, body.password);
     const deleted = await this.ordersService.deleteOrder(id);
-    await this.auditService.record(actor, 'order.delete', { type: 'order', id }, { orderNumber: deleted.orderNumber ?? deleted.orderId });
+    await this.auditService.record(
+      actor,
+      'order.delete',
+      { type: 'order', id },
+      { orderNumber: deleted.orderNumber ?? deleted.orderId },
+    );
     return deleted;
   }
 

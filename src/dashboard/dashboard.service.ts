@@ -7,7 +7,6 @@ import { Upload, UploadDocument } from '../uploads/schemas/upload.schema';
 type TotalRow = { _id: null; total: number; count: number; customers?: string[] };
 type StatusRow = { _id: string; count: number };
 type TrendRow = { _id: string; revenue: number; orders: number };
-type ProductRow = { _id: string; quantity: number; revenue: number };
 type AgingRow = { _id: string; total: number };
 type ReceivedRow = { received: number; cash: number; transfer: number; fullPayment: number; deposits: number; oldOutstandingPaid: number };
 type QuickSaleRow = { orders: number; revenue: number; items: Array<{ name: string; quantity: number; revenue: number }> };

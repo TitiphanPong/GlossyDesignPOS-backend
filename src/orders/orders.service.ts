@@ -7,10 +7,11 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { MongoServerError } from 'mongodb';
-import { isValidObjectId, Model } from 'mongoose';
+import { FilterQuery, isValidObjectId, Model } from 'mongoose';
 import { RunningNumberService } from '../counters/running-number.service';
 import { OrderResponseDto } from './dto/order-response.dto';
 import { UpdateOrderCustomerDto } from './dto/update-order-customer.dto';
+import { ListOrdersQueryDto } from './dto/list-orders-query.dto';
 import {
   Order,
   OrderDocument,
@@ -29,6 +30,12 @@ type OrderPlainObject = Order & {
 type CreateOrderIdentity = {
   clientDraftId?: string;
   idempotencyKey?: string;
+};
+type ListOrdersResponse = {
+  data: OrderResponseDto[];
+  page: number;
+  limit: number;
+  total: number;
 };
 
 const REGEX_SPECIAL_CHARS = /[.*+?^${}()|[\]\\]/g;
@@ -72,9 +79,61 @@ export class OrdersService {
     throw new InternalServerErrorException('Failed to create order.');
   }
 
-  async findAll(): Promise<OrderResponseDto[]> {
-    const orders = await this.orderModel.find().sort({ createdAt: -1 }).exec();
-    return orders.map((order) => this.toOrderResponse(order));
+  async findAll(query: ListOrdersQueryDto = {}): Promise<ListOrdersResponse> {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+    const filter = this.buildListFilter(query);
+    const [orders, total] = await Promise.all([
+      this.orderModel
+        .find(filter)
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .exec(),
+      this.orderModel.countDocuments(filter),
+    ]);
+
+    return {
+      data: orders.map((order) => this.toOrderResponse(order)),
+      page,
+      limit,
+      total,
+    };
+  }
+
+  private buildListFilter(
+    query: ListOrdersQueryDto,
+  ): FilterQuery<OrderDocument> {
+    const filter: FilterQuery<OrderDocument> = {};
+    const search = query.search?.trim();
+
+    if (search) {
+      const pattern = this.toSafePartialRegex(search);
+      filter.$or = [
+        { orderNumber: { $regex: pattern, $options: 'i' } },
+        { orderId: { $regex: pattern, $options: 'i' } },
+        { customerName: { $regex: pattern, $options: 'i' } },
+        { phoneNumber: { $regex: pattern, $options: 'i' } },
+      ];
+    }
+
+    if (query.status) {
+      filter.status = query.status;
+    }
+    if (query.paymentMethod) {
+      filter.payment = query.paymentMethod;
+    }
+    if (query.orderType) {
+      filter.orderType = query.orderType;
+    }
+    if (query.createdFrom || query.createdTo) {
+      filter.createdAt = {
+        ...(query.createdFrom ? { $gte: new Date(query.createdFrom) } : {}),
+        ...(query.createdTo ? { $lte: new Date(query.createdTo) } : {}),
+      };
+    }
+
+    return filter;
   }
 
   async findById(id: string): Promise<OrderResponseDto | null> {
@@ -99,30 +158,6 @@ export class OrdersService {
       .sort({ updatedAt: -1 })
       .exec();
     return order ? this.toOrderResponse(order) : null;
-  }
-
-  async trackOrder(
-    query?: string,
-  ): Promise<{ data: Record<string, unknown>[]; total: number }> {
-    const q = query?.trim();
-    if (!q) {
-      throw new BadRequestException('q is required.');
-    }
-    const pattern = this.toSafePartialRegex(q);
-
-    const rows = await this.orderModel
-      .find({
-        $or: [
-          { orderNumber: { $regex: pattern, $options: 'i' } },
-          { orderId: { $regex: pattern, $options: 'i' } },
-          { phoneNumber: { $regex: pattern, $options: 'i' } },
-        ],
-      })
-      .sort({ createdAt: -1 })
-      .limit(10)
-      .exec();
-    const data = rows.map((order) => this.toTrackingResponse(order));
-    return { data, total: data.length };
   }
 
   async updateStatus(
@@ -225,27 +260,53 @@ export class OrdersService {
     if (!existing) {
       throw new NotFoundException(`Order not found for id "${id}".`);
     }
-    const storedSubtotal = Number(existing.subtotal) || Number(existing.total) || 0;
-    const taxableAmount = Math.max(0, storedSubtotal - (Number(existing.discount) || 0));
+    const storedSubtotal =
+      Number(existing.subtotal) || Number(existing.total) || 0;
+    const taxableAmount = Math.max(
+      0,
+      storedSubtotal - (Number(existing.discount) || 0),
+    );
     const vatAmount = Math.round(taxableAmount * 0.07 * 100) / 100;
     const grandTotal = Math.round((taxableAmount + vatAmount) * 100) / 100;
-    if (existing.taxInvoice === 'yes' && Number(existing.grandTotal) === grandTotal && Number(existing.vatAmount) === vatAmount) {
+    if (
+      existing.taxInvoice === 'yes' &&
+      Number(existing.grandTotal) === grandTotal &&
+      Number(existing.vatAmount) === vatAmount
+    ) {
       return this.toOrderResponse(existing);
     }
 
-    const invoiceNumber = existing.invoiceNumber ?? await this.runningNumberService.generateTaxInvoiceNumber();
+    const invoiceNumber =
+      existing.invoiceNumber ??
+      (await this.runningNumberService.generateTaxInvoiceNumber());
     const paidAmount = Number(existing.paidAmount) || 0;
-    const remainingTotal = Math.max(0, Math.round((grandTotal - paidAmount) * 100) / 100);
-    const status = remainingTotal > 0 && paidAmount > 0 ? 'partial' : existing.status;
-    const updated = await this.orderModel.findOneAndUpdate(
-      { _id: id },
-      { $set: { taxInvoice: 'yes', invoiceNumber, vatAmount, grandTotal, remainingTotal, status } },
-      { new: true, runValidators: true },
-    ).exec();
+    const remainingTotal = Math.max(
+      0,
+      Math.round((grandTotal - paidAmount) * 100) / 100,
+    );
+    const status =
+      remainingTotal > 0 && paidAmount > 0 ? 'partial' : existing.status;
+    const updated = await this.orderModel
+      .findOneAndUpdate(
+        { _id: id },
+        {
+          $set: {
+            taxInvoice: 'yes',
+            invoiceNumber,
+            vatAmount,
+            grandTotal,
+            remainingTotal,
+            status,
+          },
+        },
+        { new: true, runValidators: true },
+      )
+      .exec();
 
     if (!updated) {
       const latest = await this.orderModel.findById(id).exec();
-      if (!latest) throw new NotFoundException(`Order not found for id "${id}".`);
+      if (!latest)
+        throw new NotFoundException(`Order not found for id "${id}".`);
       return this.toOrderResponse(latest);
     }
 
@@ -515,9 +576,10 @@ export class OrdersService {
   ): Promise<OrderResponseDto> {
     const normalizedOrder = this.normalizeOrderForCreate(orderDto);
     const orderNumber = await this.runningNumberService.generateOrderNumber();
-    const invoiceNumber = normalizedOrder.taxInvoice === 'yes'
-      ? await this.runningNumberService.generateTaxInvoiceNumber()
-      : undefined;
+    const invoiceNumber =
+      normalizedOrder.taxInvoice === 'yes'
+        ? await this.runningNumberService.generateTaxInvoiceNumber()
+        : undefined;
     const status = normalizedOrder.status ?? 'pending';
     const createdOrder = new this.orderModel({
       ...normalizedOrder,
