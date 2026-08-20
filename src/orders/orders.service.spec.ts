@@ -113,6 +113,53 @@ describe('OrdersService', () => {
     );
   });
 
+  it('defaults normal orders to the current sale date', () => {
+    const result = (
+      service as unknown as {
+        normalizeOrderForCreate: (
+          order: Record<string, unknown>,
+        ) => Record<string, unknown>;
+      }
+    ).normalizeOrderForCreate({
+      cart: [{ name: 'Item', qty: 1, unitPrice: 100, totalPrice: 100 }],
+      payment: 'cash',
+      total: 100,
+    });
+
+    expect(result.entryMode).toBe('normal');
+    expect(result.isBackdated).toBe(false);
+    expect(result.saleDate).toBeInstanceOf(Date);
+    expect((result.saleDate as Date).getTime()).toBeLessThanOrEqual(Date.now());
+  });
+
+  it('accepts a past sale date and rejects a future sale date', () => {
+    const normalize = (saleDate: string) =>
+      (
+        service as unknown as {
+          normalizeOrderForCreate: (
+            order: Record<string, unknown>,
+          ) => Record<string, unknown>;
+        }
+      ).normalizeOrderForCreate({
+        entryMode: 'backdated',
+        saleDate,
+        backdatedReason: 'ตกหล่น',
+        cart: [{ name: 'Item', qty: 1, unitPrice: 100, totalPrice: 100 }],
+        payment: 'cash',
+        total: 100,
+      });
+
+    const result = normalize('2026-08-18T14:30:00.000Z');
+    expect(result.entryMode).toBe('backdated');
+    expect(result.isBackdated).toBe(true);
+    expect(result.saleDate).toEqual(new Date('2026-08-18T14:30:00.000Z'));
+    expect(result.backdatedReason).toBe('ตกหล่น');
+
+    expect(() => normalize('2999-01-01T00:00:00.000Z')).toThrow(
+      BadRequestException,
+    );
+  });
+
   it('throws 404 when order does not exist', async () => {
     findByIdAndUpdate.mockReturnValue({
       exec: jest.fn().mockResolvedValue(null),

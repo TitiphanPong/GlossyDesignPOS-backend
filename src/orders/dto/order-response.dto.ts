@@ -1,4 +1,9 @@
-import { OrderStatus, OrderType, PaymentMethod } from '../orders.schema';
+import {
+  OrderEntryMode,
+  OrderStatus,
+  OrderType,
+  PaymentMethod,
+} from '../orders.schema';
 
 type OrderPaymentDto = {
   amount: number;
@@ -45,6 +50,10 @@ export class OrderResponseDto {
   clientDraftId?: string;
   idempotencyKey?: string;
   orderId!: string;
+  saleDate?: Date;
+  entryMode!: OrderEntryMode;
+  isBackdated!: boolean;
+  backdatedReason?: string;
   orderNumber?: string;
   invoiceNumber?: string;
   customerName!: string;

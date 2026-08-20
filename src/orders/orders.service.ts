@@ -30,6 +30,7 @@ type OrderPlainObject = Order & {
   _id: unknown;
   createdAt?: Date;
   updatedAt?: Date;
+  saleDate?: Date;
 };
 type CreateOrderIdentity = {
   clientDraftId?: string;
@@ -135,6 +136,24 @@ export class OrdersService {
         ...(query.createdFrom ? { $gte: new Date(query.createdFrom) } : {}),
         ...(query.createdTo ? { $lte: new Date(query.createdTo) } : {}),
       };
+    }
+    if (query.saleFrom || query.saleTo) {
+      const saleDateRange = {
+        ...(query.saleFrom ? { $gte: new Date(query.saleFrom) } : {}),
+        ...(query.saleTo ? { $lte: new Date(query.saleTo) } : {}),
+      };
+      filter.$and = [
+        ...(filter.$and ?? []),
+        {
+          $or: [
+            { saleDate: saleDateRange },
+            { saleDate: { $exists: false }, createdAt: saleDateRange },
+          ],
+        },
+      ];
+    }
+    if (query.entryMode && query.entryMode !== 'all') {
+      filter.entryMode = query.entryMode;
     }
 
     return filter;
@@ -797,6 +816,23 @@ export class OrdersService {
   }
 
   private normalizeOrderForCreate(orderDto: CreateOrderDto): Partial<Order> {
+    const now = new Date();
+    const entryMode = orderDto.entryMode ?? 'normal';
+    const saleDate =
+      entryMode === 'backdated' ? new Date(orderDto.saleDate ?? '') : now;
+
+    if (
+      entryMode === 'backdated' &&
+      (!orderDto.saleDate || Number.isNaN(saleDate.getTime()))
+    ) {
+      throw new BadRequestException(
+        'saleDate is required for a backdated order.',
+      );
+    }
+    if (saleDate.getTime() > now.getTime()) {
+      throw new BadRequestException('saleDate cannot be in the future.');
+    }
+
     const cart = (orderDto.cart ?? []).map((item) => {
       const qty = Number(item.qty ?? item.quantity);
       const unitPrice = Number(item.unitPrice ?? item.price);
@@ -885,6 +921,13 @@ export class OrdersService {
       remainingTotal,
       payment,
       paymentMethod: payment,
+      saleDate,
+      entryMode,
+      isBackdated: entryMode === 'backdated',
+      backdatedReason:
+        entryMode === 'backdated'
+          ? orderDto.backdatedReason?.trim() || undefined
+          : undefined,
       taxInvoice,
       vatAmount,
       cart,
@@ -990,6 +1033,15 @@ export class OrdersService {
       clientDraftId: plain.clientDraftId,
       idempotencyKey: plain.idempotencyKey,
       orderId: plain.orderId ?? order._id.toString(),
+      saleDate: plain.saleDate ?? plain.createdAt,
+      entryMode: plain.entryMode ?? (plain.saleDate ? 'backdated' : 'normal'),
+      isBackdated:
+        plain.isBackdated ??
+        Boolean(
+          plain.saleDate &&
+            plain.saleDate.getTime() !== plain.createdAt?.getTime(),
+        ),
+      backdatedReason: plain.backdatedReason,
       orderNumber: plain.orderNumber,
       invoiceNumber: plain.invoiceNumber,
       customerName: plain.customerName,

@@ -3,6 +3,7 @@ import {
   IsArray,
   IsBoolean,
   IsIn,
+  IsDateString,
   IsNotEmpty,
   IsNumber,
   IsOptional,
@@ -12,6 +13,7 @@ import {
 } from 'class-validator';
 import {
   ORDER_TYPES,
+  ORDER_ENTRY_MODES,
   OrderType,
   ORDER_STATUSES,
   OrderStatus,
@@ -243,6 +245,18 @@ export class CreateOrderDto {
   @IsOptional()
   @IsIn(ORDER_TYPES)
   orderType?: OrderType;
+
+  @IsOptional()
+  @IsIn(ORDER_ENTRY_MODES)
+  entryMode?: 'normal' | 'backdated';
+
+  @IsOptional()
+  @IsDateString()
+  saleDate?: string;
+
+  @IsOptional()
+  @IsString()
+  backdatedReason?: string;
 
   @IsOptional()
   @IsString()

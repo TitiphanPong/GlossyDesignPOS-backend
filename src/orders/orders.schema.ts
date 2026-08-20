@@ -17,6 +17,8 @@ export type OrderStatus = (typeof ORDER_STATUSES)[number];
 export type OrderDocument = HydratedDocument<Order>;
 export const ORDER_TYPES = ['NORMAL', 'QUICK_SALE'] as const;
 export type OrderType = (typeof ORDER_TYPES)[number];
+export const ORDER_ENTRY_MODES = ['normal', 'backdated'] as const;
+export type OrderEntryMode = (typeof ORDER_ENTRY_MODES)[number];
 
 @Schema({ timestamps: true })
 export class Order {
@@ -28,6 +30,18 @@ export class Order {
 
   @Prop()
   orderId?: string;
+
+  @Prop({ type: Date, index: true })
+  saleDate?: Date;
+
+  @Prop({ type: String, enum: ORDER_ENTRY_MODES, default: 'normal' })
+  entryMode!: OrderEntryMode;
+
+  @Prop({ type: Boolean, default: false })
+  isBackdated!: boolean;
+
+  @Prop({ maxlength: 1000 })
+  backdatedReason?: string;
 
   @Prop({ unique: true, sparse: true })
   idempotencyKey?: string;
@@ -283,3 +297,4 @@ export const OrderSchema = SchemaFactory.createForClass(Order);
 OrderSchema.index({ status: 1, createdAt: -1 });
 OrderSchema.index({ orderType: 1, createdAt: -1 });
 OrderSchema.index({ createdAt: -1 });
+OrderSchema.index({ saleDate: 1, status: 1 });

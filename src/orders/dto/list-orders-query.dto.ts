@@ -56,4 +56,16 @@ export class ListOrdersQueryDto {
   @IsOptional()
   @IsDateString()
   createdTo?: string;
+
+  @IsOptional()
+  @IsDateString()
+  saleFrom?: string;
+
+  @IsOptional()
+  @IsDateString()
+  saleTo?: string;
+
+  @IsOptional()
+  @IsIn(['all', 'normal', 'backdated'])
+  entryMode?: 'all' | 'normal' | 'backdated';
 }
