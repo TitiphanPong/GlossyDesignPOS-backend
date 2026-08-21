@@ -35,8 +35,8 @@ describe('authoritative order financial pipeline (integration)', () => {
       return Promise.resolve(this);
     }
 
-    toObject() {
-      return { ...this, _id: this._id };
+    toObject(): Record<string, unknown> {
+      return { ...this, _id: this._id } as Record<string, unknown>;
     }
   }
 
@@ -182,6 +182,31 @@ describe('authoritative order financial pipeline (integration)', () => {
             remainingTotal: 0,
             changeAmount: 3.7,
             status: 'paid',
+          }),
+        );
+      });
+  });
+
+  it('keeps percentage and satang rounding authoritative through the HTTP contract', async () => {
+    await request(server)
+      .post('/orders')
+      .send({
+        orderType: 'QUICK_SALE',
+        cart: [{ productCode: 'A4', quantity: 3 }],
+        discount: { type: 'percent', value: 12.345 },
+        taxInvoice: 'yes',
+      })
+      .expect(201)
+      .expect(({ body }: { body: Record<string, unknown> }) => {
+        expect(body).toEqual(
+          expect.objectContaining({
+            subtotal: 300,
+            discount: 37.05,
+            vatAmount: 18.41,
+            grandTotal: 281.36,
+            paidAmount: 0,
+            remainingTotal: 281.36,
+            status: 'awaiting_payment',
           }),
         );
       });

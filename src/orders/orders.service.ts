@@ -4,10 +4,11 @@ import {
   Injectable,
   InternalServerErrorException,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { MongoServerError } from 'mongodb';
-import { FilterQuery, isValidObjectId, Model } from 'mongoose';
+import { isValidObjectId, Model } from 'mongoose';
 import { RunningNumberService } from '../counters/running-number.service';
 import { OrderResponseDto } from './dto/order-response.dto';
 import {
@@ -16,6 +17,7 @@ import {
 } from './dto/tracking-response.dto';
 import { UpdateOrderCustomerDto } from './dto/update-order-customer.dto';
 import { ListOrdersQueryDto } from './dto/list-orders-query.dto';
+import { ExportOrdersQueryDto } from './dto/list-orders-query.dto';
 import {
   Order,
   OrderDocument,
@@ -31,8 +33,11 @@ import {
 } from './order-money';
 import { OrderPricingService } from './order-pricing.service';
 import { UserRole } from '../auth/auth.constants';
+import {
+  OrderReportingService,
+  OrderReportSummary,
+} from './order-reporting.service';
 
-type AggregateTotal = { _id: null; total: number };
 type OrderPlainObject = Order & {
   _id: unknown;
   createdAt?: Date;
@@ -48,6 +53,7 @@ type ListOrdersResponse = {
   page: number;
   limit: number;
   total: number;
+  summary: OrderReportSummary;
 };
 
 const REGEX_SPECIAL_CHARS = /[.*+?^${}()|[\]\\]/g;
@@ -59,6 +65,7 @@ export class OrdersService {
     private readonly runningNumberService: RunningNumberService,
     private readonly ordersSse: OrdersSseService,
     private readonly orderPricing: OrderPricingService,
+    @Optional() private readonly orderReporting: OrderReportingService,
   ) {}
 
   async create(
@@ -96,76 +103,25 @@ export class OrdersService {
   async findAll(query: ListOrdersQueryDto = {}): Promise<ListOrdersResponse> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
-    const filter = this.buildListFilter(query);
-    const [orders, total] = await Promise.all([
-      this.orderModel
-        .find(filter)
-        .sort({ createdAt: -1 })
-        .skip((page - 1) * limit)
-        .limit(limit)
-        .exec(),
+    const filter = this.orderReporting.buildOrderFilter(query);
+    const [plainOrders, total, summary] = await Promise.all([
+      this.orderModel.aggregate<OrderPlainObject>([
+        ...this.orderReporting.listPipeline(query),
+        { $skip: (page - 1) * limit },
+        { $limit: limit },
+      ]),
       this.orderModel.countDocuments(filter),
+      this.orderReporting.getOrderSummary(query),
     ]);
+    const orders = plainOrders.map((order) => this.orderModel.hydrate(order));
 
     return {
       data: orders.map((order) => this.toOrderResponse(order)),
       page,
       limit,
       total,
+      summary,
     };
-  }
-
-  private buildListFilter(
-    query: ListOrdersQueryDto,
-  ): FilterQuery<OrderDocument> {
-    const filter: FilterQuery<OrderDocument> = {};
-    const search = query.search?.trim();
-
-    if (search) {
-      const pattern = this.toSafePartialRegex(search);
-      filter.$or = [
-        { orderNumber: { $regex: pattern, $options: 'i' } },
-        { orderId: { $regex: pattern, $options: 'i' } },
-        { customerName: { $regex: pattern, $options: 'i' } },
-        { phoneNumber: { $regex: pattern, $options: 'i' } },
-      ];
-    }
-
-    if (query.status) {
-      filter.status = query.status;
-    }
-    if (query.paymentMethod) {
-      filter.payment = query.paymentMethod;
-    }
-    if (query.orderType) {
-      filter.orderType = query.orderType;
-    }
-    if (query.createdFrom || query.createdTo) {
-      filter.createdAt = {
-        ...(query.createdFrom ? { $gte: new Date(query.createdFrom) } : {}),
-        ...(query.createdTo ? { $lte: new Date(query.createdTo) } : {}),
-      };
-    }
-    if (query.saleFrom || query.saleTo) {
-      const saleDateRange = {
-        ...(query.saleFrom ? { $gte: new Date(query.saleFrom) } : {}),
-        ...(query.saleTo ? { $lte: new Date(query.saleTo) } : {}),
-      };
-      filter.$and = [
-        ...(filter.$and ?? []),
-        {
-          $or: [
-            { saleDate: saleDateRange },
-            { saleDate: { $exists: false }, createdAt: saleDateRange },
-          ],
-        },
-      ];
-    }
-    if (query.entryMode && query.entryMode !== 'all') {
-      filter.entryMode = query.entryMode;
-    }
-
-    return filter;
   }
 
   async findById(id: string): Promise<OrderResponseDto | null> {
@@ -370,92 +326,20 @@ export class OrdersService {
   }
 
   async getSummary() {
-    const startOfDay = new Date(new Date().setHours(0, 0, 0, 0));
-
-    const totalSalesToday = await this.orderModel.aggregate<AggregateTotal>([
-      {
-        $match: {
-          status: { $in: ['paid', 'partial'] },
-          createdAt: { $gte: startOfDay },
-        },
-      },
-      {
-        $group: {
-          _id: null,
-          total: {
-            $sum: {
-              $cond: [
-                { $eq: ['$status', 'partial'] },
-                '$depositTotal',
-                '$total',
-              ],
-            },
-          },
-        },
-      },
-    ]);
-
-    const totalCashToday = await this.orderModel.aggregate<AggregateTotal>([
-      {
-        $match: {
-          status: { $in: ['paid', 'partial'] },
-          payment: 'cash',
-          createdAt: { $gte: startOfDay },
-        },
-      },
-      {
-        $group: {
-          _id: null,
-          total: {
-            $sum: {
-              $cond: [
-                { $eq: ['$status', 'partial'] },
-                '$depositTotal',
-                '$total',
-              ],
-            },
-          },
-        },
-      },
-    ]);
-
-    const totalPromptPayToday = await this.orderModel.aggregate<AggregateTotal>(
-      [
-        {
-          $match: {
-            status: { $in: ['paid', 'partial'] },
-            payment: 'promptpay',
-            createdAt: { $gte: startOfDay },
-          },
-        },
-        {
-          $group: {
-            _id: null,
-            total: {
-              $sum: {
-                $cond: [
-                  { $eq: ['$status', 'partial'] },
-                  '$depositTotal',
-                  '$total',
-                ],
-              },
-            },
-          },
-        },
-      ],
-    );
-
-    const completedCount = await this.orderModel.countDocuments({
-      status: { $in: ['paid', 'partial'] },
-      createdAt: { $gte: startOfDay },
+    const metrics = await this.orderReporting.getDashboardMetrics({
+      period: 'today',
     });
 
     return {
-      salesToday: totalSalesToday[0]?.total ?? 0,
-      cashToday: totalCashToday[0]?.total ?? 0,
-      promptPayToday: totalPromptPayToday[0]?.total ?? 0,
-      completed: completedCount,
+      salesToday: metrics.periodSummary.sales,
+      cashToday: metrics.paymentSummary.cash,
+      promptPayToday: metrics.paymentSummary.transfer,
+      completed: metrics.periodSummary.orders,
     };
+  }
+
+  exportOrders(query: ExportOrdersQueryDto) {
+    return this.orderReporting.buildExport(query);
   }
 
   async findByOrderId(orderNumber: string): Promise<OrderResponseDto | null> {

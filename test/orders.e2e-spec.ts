@@ -22,6 +22,8 @@ describe('OrdersController (e2e)', () => {
   const create = jest.fn();
   const findAll = jest.fn();
   const findById = jest.fn();
+  const exportOrders = jest.fn();
+  const recordAudit = jest.fn();
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -32,6 +34,7 @@ describe('OrdersController (e2e)', () => {
           useValue: {
             create,
             findAll,
+            exportOrders,
             getSummary: jest.fn(),
             findLatestActive: jest.fn(),
             updateStatus,
@@ -47,7 +50,7 @@ describe('OrdersController (e2e)', () => {
             asObservable: jest.fn(),
           },
         },
-        { provide: AuditService, useValue: { record: jest.fn() } },
+        { provide: AuditService, useValue: { record: recordAudit } },
         { provide: AuthService, useValue: { confirmPassword: jest.fn() } },
       ],
     }).compile();
@@ -75,6 +78,47 @@ describe('OrdersController (e2e)', () => {
     create.mockReset();
     findAll.mockReset();
     findById.mockReset();
+    exportOrders.mockReset();
+    recordAudit.mockReset();
+  });
+
+  it('GET /orders/export returns a real PDF response and forwards filters', async () => {
+    exportOrders.mockResolvedValue({
+      buffer: Buffer.from('%PDF-test'),
+      contentType: 'application/pdf',
+      filename: 'orders-2026-08.pdf',
+      count: 12,
+    });
+
+    await request(server)
+      .get('/orders/export?format=pdf&saleMonth=2026-08&sort=amount_desc')
+      .expect(200)
+      .expect('Content-Type', /application\/pdf/)
+      .expect(
+        'Content-Disposition',
+        'attachment; filename="orders-2026-08.pdf"',
+      );
+
+    expect(exportOrders).toHaveBeenCalledWith(
+      expect.objectContaining({
+        format: 'pdf',
+        saleMonth: '2026-08',
+        sort: 'amount_desc',
+      }),
+    );
+    expect(recordAudit).toHaveBeenCalledWith(
+      null,
+      'order.report.export',
+      { type: 'order_report', id: '2026-08' },
+      { format: 'pdf', count: 12, saleMonth: '2026-08' },
+    );
+  });
+
+  it('GET /orders/export rejects an invalid sale month before generation', async () => {
+    await request(server)
+      .get('/orders/export?format=xlsx&saleMonth=2026-13')
+      .expect(400);
+    expect(exportOrders).not.toHaveBeenCalled();
   });
 
   it('POST /orders accepts only pricing intents and payment facts', async () => {

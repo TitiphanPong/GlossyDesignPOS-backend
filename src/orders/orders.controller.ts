@@ -11,7 +11,9 @@ import {
   Query,
   Sse,
   Request,
+  Res,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { Observable } from 'rxjs';
 import { OrdersService } from './orders.service';
 import { CustomerSseMessage, OrdersSseService } from './orders.sse.service';
@@ -27,6 +29,7 @@ import { AuthenticatedUser } from '../auth/auth.types';
 import { AuthService } from '../auth/auth.service';
 import { DeleteOrderDto } from './dto/delete-order.dto';
 import { ListOrdersQueryDto } from './dto/list-orders-query.dto';
+import { ExportOrdersQueryDto } from './dto/list-orders-query.dto';
 
 type AuthRequest = { user?: AuthenticatedUser };
 
@@ -59,12 +62,41 @@ export class OrdersController {
 
   @Get()
   async findAll(@Query() query: ListOrdersQueryDto) {
-    return this.ordersService.findAll(query);
+    const definedQuery = Object.fromEntries(
+      Object.entries(query).filter(([, value]) => value !== undefined),
+    ) as ListOrdersQueryDto;
+    return this.ordersService.findAll(definedQuery);
   }
 
   @Get('summary')
   async getSummary() {
     return this.ordersService.getSummary();
+  }
+
+  @Get('export')
+  async exportOrders(
+    @Query() query: ExportOrdersQueryDto,
+    @Request() request: AuthRequest,
+    @Res() response: Response,
+  ): Promise<void> {
+    const exported = await this.ordersService.exportOrders(query);
+    await this.auditService.record(
+      request.user ?? null,
+      'order.report.export',
+      { type: 'order_report', id: query.saleMonth ?? 'all' },
+      {
+        format: query.format,
+        count: exported.count,
+        saleMonth: query.saleMonth ?? 'all',
+      },
+    );
+    response.setHeader('Content-Type', exported.contentType);
+    response.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${exported.filename}"`,
+    );
+    response.setHeader('Content-Length', String(exported.buffer.length));
+    response.end(exported.buffer);
   }
 
   // ✅ SSE stream สำหรับหน้า Customer
