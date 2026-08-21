@@ -7,6 +7,12 @@ import { Counter, CounterSchema } from '../counters/counters.schema';
 import { OrdersSseService } from './orders.sse.service';
 import { RunningNumberService } from '../counters/running-number.service';
 import { AuthModule } from '../auth/auth.module';
+import { Product, ProductSchema } from '../products/product.schema';
+import {
+  QuickProduct,
+  QuickProductSchema,
+} from '../quick-products/quick-product.schema';
+import { OrderPricingService } from './order-pricing.service';
 
 @Module({
   imports: [
@@ -14,9 +20,16 @@ import { AuthModule } from '../auth/auth.module';
     MongooseModule.forFeature([
       { name: Order.name, schema: OrderSchema },
       { name: Counter.name, schema: CounterSchema },
+      { name: Product.name, schema: ProductSchema },
+      { name: QuickProduct.name, schema: QuickProductSchema },
     ]),
   ],
   controllers: [OrdersController],
-  providers: [OrdersService, RunningNumberService, OrdersSseService],
+  providers: [
+    OrdersService,
+    RunningNumberService,
+    OrdersSseService,
+    OrderPricingService,
+  ],
 })
 export class OrdersModule {}

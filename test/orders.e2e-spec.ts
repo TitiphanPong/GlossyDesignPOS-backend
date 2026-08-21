@@ -77,7 +77,7 @@ describe('OrdersController (e2e)', () => {
     findById.mockReset();
   });
 
-  it('POST /orders accepts the current POS rich order payload', async () => {
+  it('POST /orders accepts only pricing intents and payment facts', async () => {
     create.mockResolvedValue({
       _id: '61a1c287e53a7024d4ab81425',
       orderId: '61a1c287e53a7024d4ab81425',
@@ -114,32 +114,18 @@ describe('OrdersController (e2e)', () => {
         taxId: '0123456789012',
         branch: 'HQ',
         salesChannel: 'pos',
-        payment: 'promptpay',
-        status: 'partial',
-        total: 1000,
-        discount: 0,
-        depositTotal: 500,
-        remainingTotal: 570,
+        discount: { type: 'amount', value: 0 },
+        initialPayment: { amount: 500, method: 'promptpay' },
         taxInvoice: 'yes',
-        vatAmount: 70,
-        grandTotal: 1070,
         cart: [
           {
-            key: 'line-1',
-            name: 'Sticker PP',
-            category: 'Sticker',
-            variant: {
-              id: 'variant-a4',
-              name: 'A4',
-              price: 100,
-              custom: true,
-              width: 210,
-              height: 297,
+            productId: '61a1c287e53a7024d4ab8142',
+            variantId: 'variant-a4',
+            quantity: 10,
+            priceOverride: {
+              unitPrice: 100,
+              reason: 'approved configured quote',
             },
-            qty: 10,
-            unitPrice: 100,
-            totalPrice: 1000,
-            lineTotal: 1000,
             productNote: 'Matte finish',
             colorMode: 'color',
             type: 'normal',
@@ -151,8 +137,6 @@ describe('OrdersController (e2e)', () => {
             stickerPVCType: 'clear',
             plotPlanType: 'a1',
             typePremium: 'roundpin',
-            deposit: 500,
-            remaining: 500,
             fullPayment: false,
           },
         ],
@@ -162,17 +146,59 @@ describe('OrdersController (e2e)', () => {
     expect(create).toHaveBeenCalledWith(
       expect.objectContaining({
         taxInvoice: 'yes',
-        vatAmount: 70,
         companyName: 'Glossy Co',
         cart: [
           expect.objectContaining({
-            lineTotal: 1000,
+            quantity: 10,
+            priceOverride: {
+              unitPrice: 100,
+              reason: 'approved configured quote',
+            },
             plotPlanType: 'a1',
           }),
         ],
       }),
       undefined,
+      undefined,
     );
+  });
+
+  it('POST /orders rejects caller-authored totals and financial status', async () => {
+    await request(server)
+      .post('/orders')
+      .send({
+        customerName: 'Tampered',
+        subtotal: 1,
+        grandTotal: 1,
+        paidAmount: 1,
+        remainingTotal: 0,
+        status: 'paid',
+        cart: [
+          {
+            customName: 'Custom item',
+            quantity: 1,
+            priceOverride: { unitPrice: 100, reason: 'approved quote' },
+            unitPrice: 1,
+            lineTotal: 1,
+          },
+        ],
+      })
+      .expect(400)
+      .expect(({ body }: { body: { message: string[] } }) => {
+        expect(body.message).toEqual(
+          expect.arrayContaining([
+            'property subtotal should not exist',
+            'property grandTotal should not exist',
+            'property paidAmount should not exist',
+            'property remainingTotal should not exist',
+            'property status should not exist',
+            'cart.0.property unitPrice should not exist',
+            'cart.0.property lineTotal should not exist',
+          ]),
+        );
+      });
+
+    expect(create).not.toHaveBeenCalled();
   });
 
   it('POST /orders keeps validation strict for unknown rich payload fields', async () => {
@@ -182,10 +208,9 @@ describe('OrdersController (e2e)', () => {
         customerName: 'Glossy Customer',
         cart: [
           {
-            name: 'Sticker PP',
-            qty: 1,
-            unitPrice: 100,
-            totalPrice: 100,
+            customName: 'Sticker PP',
+            quantity: 1,
+            priceOverride: { unitPrice: 100, reason: 'approved quote' },
             unsupportedMetadata: true,
           },
         ],
@@ -201,6 +226,48 @@ describe('OrdersController (e2e)', () => {
 
     expect(create).not.toHaveBeenCalled();
   });
+
+  it.each([
+    {
+      quantity: 0,
+      unitPrice: 100,
+      expected: 'cart.0.quantity must not be less than 1',
+    },
+    {
+      quantity: -1,
+      unitPrice: 100,
+      expected: 'cart.0.quantity must not be less than 1',
+    },
+    {
+      quantity: 1,
+      unitPrice: 0,
+      expected: 'cart.0.priceOverride.unitPrice must not be less than 0.01',
+    },
+    {
+      quantity: 1,
+      unitPrice: -1,
+      expected: 'cart.0.priceOverride.unitPrice must not be less than 0.01',
+    },
+  ])(
+    'POST /orders rejects invalid quantity/price facts: %p',
+    async ({ quantity, unitPrice, expected }) => {
+      await request(server)
+        .post('/orders')
+        .send({
+          cart: [
+            {
+              customName: 'Invalid item',
+              quantity,
+              priceOverride: { unitPrice, reason: 'test' },
+            },
+          ],
+        })
+        .expect(400)
+        .expect(({ body }: { body: { message: string[] } }) => {
+          expect(body.message).toEqual(expect.arrayContaining([expected]));
+        });
+    },
+  );
 
   it('PATCH /orders/:id updates customer info and returns the updated order', async () => {
     updateOrder.mockResolvedValue({

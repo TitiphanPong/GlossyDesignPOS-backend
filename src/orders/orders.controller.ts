@@ -45,7 +45,11 @@ export class OrdersController {
     @Request() request: AuthRequest,
     @Headers('idempotency-key') idempotencyKey?: string,
   ): Promise<OrderResponseDto> {
-    const created = await this.ordersService.create(order, idempotencyKey);
+    const created = await this.ordersService.create(
+      order,
+      idempotencyKey,
+      request.user?.role,
+    );
     await this.auditService.record(request.user ?? null, 'order.create', {
       type: 'order',
       id: created._id,
@@ -174,5 +178,4 @@ export class OrdersController {
     );
     return updated;
   }
-
 }

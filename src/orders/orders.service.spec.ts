@@ -4,6 +4,7 @@ import { RunningNumberService } from '../counters/running-number.service';
 import { OrderDocument } from './orders.schema';
 import { OrdersSseService } from './orders.sse.service';
 import { OrdersService } from './orders.service';
+import { OrderPricingService } from './order-pricing.service';
 
 type FindByIdAndUpdateArgs = [
   string,
@@ -28,6 +29,20 @@ describe('OrdersService', () => {
     emitOrderAndAutoClear: jest.fn(),
   } as unknown as OrdersSseService;
 
+  const orderPricing = {
+    resolveCart: jest.fn((_orderType, cart: Array<Record<string, unknown>>) =>
+      Promise.resolve(
+        cart.map((item) => ({
+          name: 'Item',
+          qty: Number(item.quantity),
+          unitPrice: 100,
+          totalPrice: Number(item.quantity) * 100,
+          lineTotal: Number(item.quantity) * 100,
+        })),
+      ),
+    ),
+  } as unknown as OrderPricingService;
+
   let findByIdAndUpdate: jest.MockedFunction<
     OrderModelLike['findByIdAndUpdate']
   >;
@@ -44,6 +59,7 @@ describe('OrdersService', () => {
       orderModel as unknown as Model<OrderDocument>,
       runningNumberService,
       ordersSse,
+      orderPricing,
     );
   });
 
@@ -113,18 +129,26 @@ describe('OrdersService', () => {
     );
   });
 
-  it('defaults normal orders to the current sale date', () => {
-    const result = (
+  it('defaults normal orders to the current sale date', async () => {
+    const result = await (
       service as unknown as {
         normalizeOrderForCreate: (
           order: Record<string, unknown>,
-        ) => Record<string, unknown>;
+          role?: 'admin',
+        ) => Promise<Record<string, unknown>>;
       }
-    ).normalizeOrderForCreate({
-      cart: [{ name: 'Item', qty: 1, unitPrice: 100, totalPrice: 100 }],
-      payment: 'cash',
-      total: 100,
-    });
+    ).normalizeOrderForCreate(
+      {
+        cart: [
+          {
+            customName: 'Item',
+            quantity: 1,
+            priceOverride: { unitPrice: 100, reason: 'test' },
+          },
+        ],
+      },
+      'admin',
+    );
 
     expect(result.entryMode).toBe('normal');
     expect(result.isBackdated).toBe(false);
@@ -132,32 +156,117 @@ describe('OrdersService', () => {
     expect((result.saleDate as Date).getTime()).toBeLessThanOrEqual(Date.now());
   });
 
-  it('accepts a past sale date and rejects a future sale date', () => {
+  it('accepts a past sale date and rejects a future sale date', async () => {
     const normalize = (saleDate: string) =>
       (
         service as unknown as {
           normalizeOrderForCreate: (
             order: Record<string, unknown>,
-          ) => Record<string, unknown>;
+            role?: 'admin',
+          ) => Promise<Record<string, unknown>>;
         }
-      ).normalizeOrderForCreate({
-        entryMode: 'backdated',
-        saleDate,
-        backdatedReason: 'ตกหล่น',
-        cart: [{ name: 'Item', qty: 1, unitPrice: 100, totalPrice: 100 }],
-        payment: 'cash',
-        total: 100,
-      });
+      ).normalizeOrderForCreate(
+        {
+          entryMode: 'backdated',
+          saleDate,
+          backdatedReason: 'ตกหล่น',
+          cart: [
+            {
+              customName: 'Item',
+              quantity: 1,
+              priceOverride: { unitPrice: 100, reason: 'test' },
+            },
+          ],
+        },
+        'admin',
+      );
 
-    const result = normalize('2026-08-18T14:30:00.000Z');
+    const result = await normalize('2026-08-18T14:30:00.000Z');
     expect(result.entryMode).toBe('backdated');
     expect(result.isBackdated).toBe(true);
     expect(result.saleDate).toEqual(new Date('2026-08-18T14:30:00.000Z'));
     expect(result.backdatedReason).toBe('ตกหล่น');
 
-    expect(() => normalize('2999-01-01T00:00:00.000Z')).toThrow(
+    await expect(normalize('2999-01-01T00:00:00.000Z')).rejects.toBeInstanceOf(
       BadRequestException,
     );
+  });
+
+  it('derives authoritative totals and status instead of copying tampered fields', async () => {
+    const result = await (
+      service as unknown as {
+        normalizeOrderForCreate: (
+          order: Record<string, unknown>,
+          role?: 'admin',
+        ) => Promise<Record<string, unknown>>;
+      }
+    ).normalizeOrderForCreate(
+      {
+        cart: [
+          {
+            customName: 'Item',
+            quantity: 1,
+            priceOverride: { unitPrice: 1, reason: 'ignored by pricing stub' },
+          },
+        ],
+        discount: { type: 'amount', value: 10 },
+        initialPayment: { amount: 40, method: 'cash', receivedAmount: 50 },
+        taxInvoice: 'yes',
+        subtotal: 1,
+        grandTotal: 1,
+        paidAmount: 1,
+        remainingTotal: 0,
+        status: 'paid',
+      },
+      'admin',
+    );
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        total: 100,
+        subtotal: 100,
+        discount: 10,
+        vatAmount: 6.3,
+        grandTotal: 96.3,
+        paidAmount: 40,
+        remainingTotal: 56.3,
+        receivedAmount: 50,
+        changeAmount: 10,
+        status: 'partial',
+      }),
+    );
+  });
+
+  it('rejects attempts to write a financial status through workflow updates', async () => {
+    await expect(
+      service.updateStatus(validOrderId, 'paid'),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(findByIdAndUpdate).not.toHaveBeenCalled();
+  });
+
+  it('rejects a discount greater than the server-priced subtotal', async () => {
+    await expect(
+      (
+        service as unknown as {
+          normalizeOrderForCreate: (
+            order: Record<string, unknown>,
+            role?: 'admin',
+          ) => Promise<Record<string, unknown>>;
+        }
+      ).normalizeOrderForCreate(
+        {
+          cart: [
+            {
+              customName: 'Item',
+              quantity: 1,
+              priceOverride: { unitPrice: 100, reason: 'test' },
+            },
+          ],
+          discount: { type: 'amount', value: 100.01 },
+        },
+        'admin',
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('throws 404 when order does not exist', async () => {

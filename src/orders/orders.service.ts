@@ -24,6 +24,13 @@ import {
 } from './orders.schema';
 import { OrdersSseService } from './orders.sse.service';
 import { CreateOrderDto } from './dto/order.dto';
+import {
+  calculateOrderMoney,
+  fromMinorUnits,
+  toMinorUnits,
+} from './order-money';
+import { OrderPricingService } from './order-pricing.service';
+import { UserRole } from '../auth/auth.constants';
 
 type AggregateTotal = { _id: null; total: number };
 type OrderPlainObject = Order & {
@@ -51,11 +58,13 @@ export class OrdersService {
     @InjectModel(Order.name) private readonly orderModel: Model<OrderDocument>,
     private readonly runningNumberService: RunningNumberService,
     private readonly ordersSse: OrdersSseService,
+    private readonly orderPricing: OrderPricingService,
   ) {}
 
   async create(
     orderDto: CreateOrderDto,
     idempotencyKey?: string,
+    actorRole?: UserRole,
   ): Promise<OrderResponseDto> {
     const identity = this.normalizeCreateIdentity(orderDto, idempotencyKey);
     const existing = await this.findExistingOrderForCreate(identity);
@@ -67,7 +76,7 @@ export class OrdersService {
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       try {
-        return await this.persistNewOrder(orderDto, identity);
+        return await this.persistNewOrder(orderDto, identity, actorRole);
       } catch (error) {
         const recovered = await this.recoverFromCreateError(
           error,
@@ -188,6 +197,15 @@ export class OrdersService {
     status: OrderStatus,
     statusNote?: string,
   ): Promise<OrderResponseDto | null> {
+    if (
+      status === 'awaiting_payment' ||
+      status === 'partial' ||
+      status === 'paid'
+    ) {
+      throw new BadRequestException(
+        'Financial status is derived from authoritative payment facts.',
+      );
+    }
     this.assertMongoObjectId(id, 'order id');
     const updated = await this.orderModel
       .findByIdAndUpdate(
@@ -307,8 +325,12 @@ export class OrdersService {
       0,
       Math.round((grandTotal - paidAmount) * 100) / 100,
     );
-    const status =
-      remainingTotal > 0 && paidAmount > 0 ? 'partial' : existing.status;
+    const status: OrderStatus =
+      paidAmount <= 0
+        ? 'awaiting_payment'
+        : remainingTotal === 0
+          ? 'paid'
+          : 'partial';
     const updated = await this.orderModel
       .findOneAndUpdate(
         { _id: id },
@@ -464,11 +486,20 @@ export class OrdersService {
       );
     }
 
-    order.depositTotal += amount;
-    order.paidAmount = (order.paidAmount ?? 0) + amount;
-    order.remainingTotal = Math.max(0, order.grandTotal - order.paidAmount);
-    order.payments.push({ amount, method, note, paidAt: new Date() });
-    order.status = order.remainingTotal === 0 ? 'paid' : 'awaiting_payment';
+    const paymentMinor = toMinorUnits(amount, 'payment amount');
+    const grandTotalMinor = toMinorUnits(order.grandTotal, 'grand total');
+    const paidMinor =
+      toMinorUnits(order.paidAmount ?? 0, 'paid amount') + paymentMinor;
+    order.depositTotal = fromMinorUnits(paidMinor);
+    order.paidAmount = fromMinorUnits(paidMinor);
+    order.remainingTotal = fromMinorUnits(grandTotalMinor - paidMinor);
+    order.payments.push({
+      amount: fromMinorUnits(paymentMinor),
+      method,
+      note,
+      paidAt: new Date(),
+    });
+    order.status = order.remainingTotal === 0 ? 'paid' : 'partial';
     order.statusHistory.push({
       status: order.status,
       note,
@@ -596,8 +627,12 @@ export class OrdersService {
   private async persistNewOrder(
     orderDto: CreateOrderDto,
     identity: CreateOrderIdentity,
+    actorRole?: UserRole,
   ): Promise<OrderResponseDto> {
-    const normalizedOrder = this.normalizeOrderForCreate(orderDto);
+    const normalizedOrder = await this.normalizeOrderForCreate(
+      orderDto,
+      actorRole,
+    );
     const orderNumber = await this.runningNumberService.generateOrderNumber();
     const invoiceNumber =
       normalizedOrder.taxInvoice === 'yes'
@@ -815,7 +850,10 @@ export class OrdersService {
     return primaryValue ?? legacyValue;
   }
 
-  private normalizeOrderForCreate(orderDto: CreateOrderDto): Partial<Order> {
+  private async normalizeOrderForCreate(
+    orderDto: CreateOrderDto,
+    actorRole?: UserRole,
+  ): Promise<Partial<Order>> {
     const now = new Date();
     const entryMode = orderDto.entryMode ?? 'normal';
     const saleDate =
@@ -833,76 +871,38 @@ export class OrdersService {
       throw new BadRequestException('saleDate cannot be in the future.');
     }
 
-    const cart = (orderDto.cart ?? []).map((item) => {
-      const qty = Number(item.qty ?? item.quantity);
-      const unitPrice = Number(item.unitPrice ?? item.price);
-      const totalPrice = Number(
-        item.totalPrice ?? item.lineTotal ?? item.total ?? qty * unitPrice,
-      );
-
-      if (!Number.isFinite(qty) || qty <= 0) {
-        throw new BadRequestException('Order item qty must be greater than 0.');
-      }
-      if (!Number.isFinite(unitPrice) || unitPrice < 0) {
-        throw new BadRequestException(
-          'Order item unitPrice must be 0 or more.',
-        );
-      }
-      if (!Number.isFinite(totalPrice) || totalPrice < 0) {
-        throw new BadRequestException(
-          'Order item totalPrice must be 0 or more.',
-        );
-      }
-
-      return {
-        ...item,
-        qty,
-        unitPrice,
-        totalPrice,
-        lineTotal: item.lineTotal ?? totalPrice,
-      };
-    });
-
-    if (!cart.length) {
-      throw new BadRequestException(
-        'Order cart must contain at least one item.',
-      );
-    }
-
-    const subtotal =
-      orderDto.subtotal ??
-      orderDto.total ??
-      cart.reduce((sum, item) => sum + item.totalPrice, 0);
-    const discount = orderDto.discount ?? 0;
+    const orderType = orderDto.orderType ?? 'NORMAL';
+    const cart = await this.orderPricing.resolveCart(
+      orderType,
+      orderDto.cart ?? [],
+      actorRole,
+    );
     const taxInvoice = orderDto.taxInvoice ?? 'no';
-    const vatAmount = orderDto.vatAmount ?? 0;
-    const grandTotal =
-      orderDto.grandTotal ?? Math.max(0, subtotal - discount) + vatAmount;
-    const paidAmount = orderDto.paidAmount ?? orderDto.depositTotal ?? 0;
-    const remainingTotal =
-      orderDto.remainingTotal ?? Math.max(0, grandTotal - paidAmount);
-    const payment = orderDto.paymentMethod ?? orderDto.payment ?? 'cash';
-
-    for (const [field, value] of Object.entries({
-      subtotal,
-      discount,
-      grandTotal,
-      paidAmount,
-      remainingTotal,
-      vatAmount,
-    })) {
-      if (!Number.isFinite(value) || value < 0) {
-        throw new BadRequestException(`${field} must be 0 or more.`);
-      }
-    }
+    const money = calculateOrderMoney(
+      cart.map((item) => ({
+        quantity: item.qty,
+        unitPrice: item.unitPrice,
+      })),
+      orderDto.discount,
+      orderDto.initialPayment,
+      taxInvoice,
+    );
+    const payment = orderDto.initialPayment?.method ?? 'cash';
+    const payments = orderDto.initialPayment
+      ? [
+          {
+            amount: money.paidAmount,
+            method: orderDto.initialPayment.method,
+            paidAt: now,
+          },
+        ]
+      : [];
 
     return {
-      ...orderDto,
-      orderId: undefined,
-      orderNumber: undefined,
-      invoiceNumber: undefined,
+      orderType,
       customerName: orderDto.customerName ?? '',
-      phoneNumber: orderDto.phoneNumber ?? orderDto.phone ?? '',
+      companyName: orderDto.companyName,
+      phoneNumber: orderDto.phoneNumber ?? '',
       email: orderDto.email ?? orderDto.customerEmail,
       customerEmail: orderDto.customerEmail ?? orderDto.email,
       address: orderDto.address ?? orderDto.customerAddress,
@@ -911,16 +911,25 @@ export class OrdersService {
       customerTaxId: orderDto.customerTaxId ?? orderDto.taxId,
       branch: orderDto.branch ?? orderDto.customerBranch,
       customerBranch: orderDto.customerBranch ?? orderDto.branch,
+      branchType: orderDto.branchType,
+      branchNo: orderDto.branchNo,
+      subDistrict: orderDto.subDistrict,
+      district: orderDto.district,
+      province: orderDto.province,
+      postalCode: orderDto.postalCode,
+      shippingAddress: orderDto.shippingAddress,
       note: orderDto.note ?? '',
-      total: subtotal,
-      subtotal,
-      discount,
-      grandTotal,
-      depositTotal: paidAmount,
-      paidAmount,
-      remainingTotal,
+      salesChannel: orderDto.salesChannel,
+      total: money.subtotal,
+      subtotal: money.subtotal,
+      discount: money.discount,
+      grandTotal: money.grandTotal,
+      depositTotal: money.paidAmount,
+      paidAmount: money.paidAmount,
+      remainingTotal: money.remainingTotal,
       payment,
       paymentMethod: payment,
+      status: money.status,
       saleDate,
       entryMode,
       isBackdated: entryMode === 'backdated',
@@ -929,7 +938,10 @@ export class OrdersService {
           ? orderDto.backdatedReason?.trim() || undefined
           : undefined,
       taxInvoice,
-      vatAmount,
+      vatAmount: money.vatAmount,
+      receivedAmount: money.receivedAmount,
+      changeAmount: money.changeAmount,
+      payments,
       cart,
     };
   }
