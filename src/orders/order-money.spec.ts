@@ -72,6 +72,24 @@ describe('order money invariants', () => {
     );
   });
 
+  it('rounds percentage input to basis points before calculating satang', () => {
+    expect(
+      calculateOrderMoney(
+        [line(333.33)],
+        { type: 'percent', value: 12.345 },
+        undefined,
+        'yes',
+      ),
+    ).toEqual(
+      expect.objectContaining({
+        subtotal: 333.33,
+        discount: 41.17,
+        vatAmount: 20.45,
+        grandTotal: 312.61,
+      }),
+    );
+  });
+
   it('rejects a discount greater than subtotal', () => {
     expect(() =>
       calculateOrderMoney(
