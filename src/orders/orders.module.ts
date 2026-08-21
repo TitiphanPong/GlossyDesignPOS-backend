@@ -13,6 +13,7 @@ import {
   QuickProductSchema,
 } from '../quick-products/quick-product.schema';
 import { OrderPricingService } from './order-pricing.service';
+import { OrderReportingService } from './order-reporting.service';
 
 @Module({
   imports: [
@@ -30,6 +31,8 @@ import { OrderPricingService } from './order-pricing.service';
     RunningNumberService,
     OrdersSseService,
     OrderPricingService,
+    OrderReportingService,
   ],
+  exports: [OrderReportingService],
 })
 export class OrdersModule {}

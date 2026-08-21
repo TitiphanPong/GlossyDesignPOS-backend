@@ -5,6 +5,7 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  Matches,
   Max,
   MaxLength,
   Min,
@@ -68,4 +69,18 @@ export class ListOrdersQueryDto {
   @IsOptional()
   @IsIn(['all', 'normal', 'backdated'])
   entryMode?: 'all' | 'normal' | 'backdated';
+
+  @IsOptional()
+  @IsString()
+  @Matches(/^\d{4}-(0[1-9]|1[0-2])$/)
+  saleMonth?: string;
+
+  @IsOptional()
+  @IsIn(['newest', 'oldest', 'amount_desc', 'amount_asc'])
+  sort?: 'newest' | 'oldest' | 'amount_desc' | 'amount_asc';
+}
+
+export class ExportOrdersQueryDto extends ListOrdersQueryDto {
+  @IsIn(['xlsx', 'pdf'])
+  format!: 'xlsx' | 'pdf';
 }
