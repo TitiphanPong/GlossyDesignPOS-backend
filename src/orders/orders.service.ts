@@ -678,6 +678,8 @@ export class OrdersService {
   ): Partial<Order> {
     const update: Partial<Order> = {};
 
+    Object.assign(update, this.buildCartItemNameUpdate(updateDto.itemNames ?? []));
+
     if (updateDto.customerName !== undefined) {
       update.customerName = updateDto.customerName;
     }
@@ -759,6 +761,10 @@ export class OrdersService {
     }
 
     return update;
+  }
+
+  private buildCartItemNameUpdate(itemNames: string[]): Record<string, string> {
+    return Object.fromEntries(itemNames.map((name, index) => [`cart.${index}.name`, name]));
   }
 
   private resolveMirroredField(
