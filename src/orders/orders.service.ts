@@ -16,8 +16,10 @@ import {
   TrackingSearchResponseDto,
 } from './dto/tracking-response.dto';
 import { UpdateOrderCustomerDto } from './dto/update-order-customer.dto';
-import { ListOrdersQueryDto } from './dto/list-orders-query.dto';
-import { ExportOrdersQueryDto } from './dto/list-orders-query.dto';
+import {
+  ExportOrdersQueryDto,
+  ListOrdersQueryDto,
+} from './dto/list-orders-query.dto';
 import {
   Order,
   OrderDocument,
@@ -66,6 +68,7 @@ export class OrdersService {
     private readonly ordersSse: OrdersSseService,
     private readonly orderPricing: OrderPricingService,
     @Optional() private readonly orderReporting: OrderReportingService,
+    @Optional() private readonly notificationsService?: any,
   ) {}
 
   async create(
@@ -281,12 +284,12 @@ export class OrdersService {
       0,
       Math.round((grandTotal - paidAmount) * 100) / 100,
     );
-    const status: OrderStatus =
-      paidAmount <= 0
-        ? 'awaiting_payment'
-        : remainingTotal === 0
-          ? 'paid'
-          : 'partial';
+    let status: OrderStatus = 'partial';
+    if (paidAmount <= 0) {
+      status = 'awaiting_payment';
+    } else if (remainingTotal === 0) {
+      status = 'paid';
+    }
     const updated = await this.orderModel
       .findOneAndUpdate(
         { _id: id },
@@ -397,6 +400,21 @@ export class OrdersService {
       this.ordersSse.emitOrderAndAutoClear(response, 7000);
     } else {
       this.ordersSse.emitOrder(response);
+    }
+
+    // Handle payment notifications
+    if (this.notificationsService) {
+      try {
+        if (order.remainingTotal === 0) {
+          // Payment cleared - resolve payment notifications
+          await this.notificationsService.autoResolvePaymentNotifications(id);
+        } else {
+          // Create outstanding payment notification
+          await this.notificationsService.handleOrderPaymentState(updated);
+        }
+      } catch (error) {
+        console.error('Failed to handle payment notification:', error);
+      }
     }
 
     return response;
@@ -541,6 +559,33 @@ export class OrdersService {
     const saved = await createdOrder.save();
     const response = this.toOrderResponse(saved);
     this.ordersSse.emitOrder(response);
+
+    // Trigger notification for new order
+    if (this.notificationsService) {
+      try {
+        await this.notificationsService.createNotification({
+          type: 'order_created',
+          category: 'action_required',
+          priority: 'high',
+          title: `รายการขายใหม่ #${saved.orderNumber}`,
+          message: `${saved.customerName || 'ลูกค้า'} รอการยืนยัน`,
+          orderId: String(saved._id),
+          orderCode: saved.orderNumber,
+          customerName: saved.customerName,
+          entityType: 'order',
+          entityId: String(saved._id),
+          notificationKey: `order_created:${saved._id}`,
+          action: {
+            label: 'ยืนยันรายการ',
+            href: `/home/orders/${saved._id}`,
+          },
+        });
+      } catch (error) {
+        // Log but don't fail order creation if notification fails
+        console.error('Failed to create notification for new order:', error);
+      }
+    }
+
     return response;
   }
 
@@ -913,6 +958,22 @@ export class OrdersService {
       this.ordersSse.emitOrderAndAutoClear(response, 7000);
     } else if (status === 'cancelled') {
       this.ordersSse.emitOrder(null);
+    }
+
+    // Handle status change notifications
+    if (this.notificationsService) {
+      try {
+        this.notificationsService
+          .handleOrderStatusChange({ _id: response._id } as any, status)
+          .catch((error: unknown) => {
+            console.error(
+              'Failed to handle status change notification:',
+              error,
+            );
+          });
+      } catch (error) {
+        console.error('Failed to trigger status change notification:', error);
+      }
     }
   }
 

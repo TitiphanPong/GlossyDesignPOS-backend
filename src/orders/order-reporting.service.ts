@@ -17,7 +17,7 @@ const DAY_MS = 86_400_000;
 const REGEX_SPECIAL_CHARS = /[.*+?^${}()|[\]\\]/g;
 
 export type ReportPeriod = {
-  mode: 'today' | 'month';
+  mode: 'today' | 'last7' | 'month' | 'custom';
   month?: string;
   from: string;
   toExclusive: string;
@@ -107,6 +107,19 @@ function monthRange(month: string): DateRange {
   };
 }
 
+function bangkokDateRange(startDate: string, endDate: string): DateRange {
+  const [startYear, startMonth, startDay] = startDate.split('-').map(Number);
+  const [endYear, endMonth, endDay] = endDate.split('-').map(Number);
+  return {
+    start: new Date(
+      Date.UTC(startYear, startMonth - 1, startDay) - BANGKOK_OFFSET_MS,
+    ),
+    end: new Date(
+      Date.UTC(endYear, endMonth - 1, endDay + 1) - BANGKOK_OFFSET_MS,
+    ),
+  };
+}
+
 function previousMonthRange(range: DateRange): DateRange {
   const shifted = new Date(range.start.getTime() + BANGKOK_OFFSET_MS);
   const year = shifted.getUTCFullYear();
@@ -117,8 +130,10 @@ function previousMonthRange(range: DateRange): DateRange {
   };
 }
 
-function periodLabel(mode: 'today' | 'month', range: DateRange): string {
+function periodLabel(mode: ReportPeriod['mode'], range: DateRange): string {
   if (mode === 'today') return 'วันนี้';
+  if (mode === 'last7') return 'ย้อนหลัง 7 วัน';
+  if (mode === 'custom') return 'ช่วงเวลาที่เลือก';
   return new Intl.DateTimeFormat('th-TH', {
     month: 'long',
     year: 'numeric',
@@ -172,18 +187,32 @@ export class OrderReportingService {
 
   resolveDashboardPeriod(query: DashboardSummaryQueryDto, now = new Date()) {
     const mode = query.period ?? 'today';
-    const current =
-      mode === 'month'
-        ? monthRange(query.month as string)
-        : {
-            start: bangkokDayStart(now),
-            end: new Date(bangkokDayStart(now).getTime() + DAY_MS),
-          };
+    const todayStart = bangkokDayStart(now);
+    let current: DateRange = {
+      start: todayStart,
+      end: new Date(todayStart.getTime() + DAY_MS),
+    };
+    if (mode === 'month') current = monthRange(query.month as string);
+    if (mode === 'last7') {
+      current = {
+        start: new Date(todayStart.getTime() - 6 * DAY_MS),
+        end: new Date(todayStart.getTime() + DAY_MS),
+      };
+    }
+    if (mode === 'custom') {
+      current = bangkokDateRange(
+        query.startDate as string,
+        query.endDate as string,
+      );
+    }
     const previous =
       mode === 'month'
         ? previousMonthRange(current)
         : {
-            start: new Date(current.start.getTime() - DAY_MS),
+            start: new Date(
+              current.start.getTime() -
+                (current.end.getTime() - current.start.getTime()),
+            ),
             end: current.start,
           };
     return { mode, current, previous };
@@ -212,6 +241,7 @@ export class OrderReportingService {
     if (query.status) filter.status = query.status;
     if (query.paymentMethod) filter.payment = query.paymentMethod;
     if (query.orderType) filter.orderType = query.orderType;
+    if (query.taxInvoice) filter.taxInvoice = query.taxInvoice;
     if (query.entryMode && query.entryMode !== 'all') {
       filter.entryMode = query.entryMode;
     }
@@ -223,7 +253,10 @@ export class OrderReportingService {
     }
 
     let saleRange: Record<string, Date> | null = null;
-    if (options.includeSaleMonth !== false && query.saleMonth) {
+    if (options.includeSaleMonth !== false && query.period === 'today') {
+      const start = bangkokDayStart();
+      saleRange = { $gte: start, $lt: new Date(start.getTime() + DAY_MS) };
+    } else if (options.includeSaleMonth !== false && query.saleMonth) {
       const range = monthRange(query.saleMonth);
       saleRange = { $gte: range.start, $lt: range.end };
     } else if (query.saleFrom || query.saleTo) {
@@ -334,12 +367,12 @@ export class OrderReportingService {
   async getDashboardMetrics(query: DashboardSummaryQueryDto) {
     const { mode, current, previous } = this.resolveDashboardPeriod(query);
     const trendRange =
-      mode === 'month'
-        ? current
-        : {
+      mode === 'today'
+        ? {
             start: new Date(current.start.getTime() - 6 * DAY_MS),
             end: current.end,
-          };
+          }
+        : current;
     const [
       currentRows,
       previousRows,

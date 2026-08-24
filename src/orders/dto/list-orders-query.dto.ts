@@ -76,6 +76,14 @@ export class ListOrdersQueryDto {
   saleMonth?: string;
 
   @IsOptional()
+  @IsIn(['today'])
+  period?: 'today';
+
+  @IsOptional()
+  @IsIn(['yes', 'no'])
+  taxInvoice?: 'yes' | 'no';
+
+  @IsOptional()
   @IsIn(['newest', 'oldest', 'amount_desc', 'amount_asc'])
   sort?: 'newest' | 'oldest' | 'amount_desc' | 'amount_asc';
 }

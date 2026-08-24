@@ -13,6 +13,6 @@ import { AuthModule } from '../auth/auth.module';
   ],
   controllers: [UploadsController],
   providers: [UploadsService, S3Service],
-  exports: [UploadsService],
+  exports: [UploadsService, MongooseModule],
 })
 export class UploadsModule {}
