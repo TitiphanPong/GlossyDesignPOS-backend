@@ -130,8 +130,15 @@ export class AuthService implements OnModuleInit {
   }
 
   async confirmPassword(userId: string, password: string): Promise<void> {
-    const user = await this.userModel.findById(userId).select('+passwordHash').exec();
-    if (!user || !user.active || !(await this.verifyPassword(password, user.passwordHash))) {
+    const user = await this.userModel
+      .findById(userId)
+      .select('+passwordHash')
+      .exec();
+    if (
+      !user ||
+      !user.active ||
+      !(await this.verifyPassword(password, user.passwordHash))
+    ) {
       throw new UnauthorizedException('Invalid password');
     }
   }

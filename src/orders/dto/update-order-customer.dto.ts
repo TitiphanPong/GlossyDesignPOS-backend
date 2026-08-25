@@ -6,7 +6,8 @@ import {
   IsString,
   MaxLength,
 } from 'class-validator';
-import { ORDER_STATUSES, OrderStatus } from '../orders.schema';
+import { ORDER_STATUSES } from '../orders.schema';
+import type { OrderStatus } from '../orders.schema';
 
 export class UpdateOrderCustomerDto {
   @IsOptional()

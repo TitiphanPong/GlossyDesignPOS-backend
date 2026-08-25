@@ -14,10 +14,12 @@ import {
 } from '../quick-products/quick-product.schema';
 import { OrderPricingService } from './order-pricing.service';
 import { OrderReportingService } from './order-reporting.service';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
     AuthModule,
+    NotificationsModule,
     MongooseModule.forFeature([
       { name: Order.name, schema: OrderSchema },
       { name: Counter.name, schema: CounterSchema },

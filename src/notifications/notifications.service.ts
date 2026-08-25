@@ -1,12 +1,12 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import {
-  Notification,
-  NotificationDocument,
-  NotificationStatus,
+import { Notification } from './notifications.schema';
+import type {
   NotificationCategory,
+  NotificationDocument,
   NotificationPriority,
+  NotificationStatus,
   NotificationType,
 } from './notifications.schema';
 import {
@@ -14,8 +14,9 @@ import {
   ListNotificationsQueryDto,
   NotificationCountDto,
 } from './dto/notification.dto';
-import { Order, OrderDocument, OrderStatus } from '../orders/orders.schema';
-import { Upload, UploadDocument } from '../uploads/schemas/upload.schema';
+import { Order } from '../orders/orders.schema';
+import type { OrderDocument, OrderStatus } from '../orders/orders.schema';
+import type { UploadDocument } from '../uploads/schemas/upload.schema';
 
 interface CreateNotificationOptions {
   type: NotificationType;
@@ -39,6 +40,13 @@ interface CreateNotificationOptions {
   notificationKey?: string; // For deduplication
 }
 
+type OrderStatusNotification = {
+  _id: string;
+  status: OrderStatus;
+  orderNumber?: string;
+  customerName: string;
+};
+
 @Injectable()
 export class NotificationsService {
   constructor(
@@ -46,8 +54,6 @@ export class NotificationsService {
     private readonly notificationModel: Model<NotificationDocument>,
     @InjectModel(Order.name)
     private readonly orderModel: Model<OrderDocument>,
-    @InjectModel(Upload.name)
-    private readonly uploadModel: Model<UploadDocument>,
   ) {}
 
   /**
@@ -102,7 +108,6 @@ export class NotificationsService {
    */
   async resolveNotification(
     notificationId: string,
-    reason?: string,
   ): Promise<NotificationResponseDto> {
     const notification = await this.notificationModel.findById(notificationId);
     if (!notification) {
@@ -365,10 +370,7 @@ export class NotificationsService {
   /**
    * Check and create status-change notifications
    */
-  async handleOrderStatusChange(
-    order: OrderDocument,
-    previousStatus?: OrderStatus,
-  ): Promise<void> {
+  async handleOrderStatusChange(order: OrderStatusNotification): Promise<void> {
     if (!order._id) return;
 
     const orderId = String(order._id);

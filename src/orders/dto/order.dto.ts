@@ -18,11 +18,9 @@ import {
   ORDER_ENTRY_MODES,
   ORDER_STATUSES,
   ORDER_TYPES,
-  OrderStatus,
-  OrderType,
   PAYMENT_METHODS,
-  PaymentMethod,
 } from '../orders.schema';
+import type { OrderStatus, OrderType, PaymentMethod } from '../orders.schema';
 import { transformOptionalString } from '../../common/transforms/optional-string.transform';
 
 export class PriceOverrideDto {

@@ -227,13 +227,25 @@ export class OrderPricingService {
 
     const filter = { active: true, $or: identities };
     if (orderType === 'QUICK_SALE') {
-      return this.quickProductModel
-        .findOne(filter)
-        .exec() as unknown as Promise<CatalogProduct | null>;
+      const product = await this.quickProductModel.findOne(filter).exec();
+      return product ? this.toCatalogProduct(product) : null;
     }
-    return this.productModel
-      .findOne(filter)
-      .exec() as unknown as Promise<CatalogProduct | null>;
+    const product = await this.productModel.findOne(filter).exec();
+    return product ? this.toCatalogProduct(product) : null;
+  }
+
+  private toCatalogProduct(
+    product: ProductDocument | QuickProductDocument,
+  ): CatalogProduct {
+    return {
+      _id: product._id,
+      name: product.name,
+      code: product.code,
+      typeCode: product.typeCode,
+      category: product.category,
+      active: product.active,
+      variants: product.variants,
+    };
   }
 
   private resolveVariant(
@@ -245,13 +257,15 @@ export class OrderPricingService {
       (variant) => variant.active !== false,
     );
     let variant: CatalogVariant | undefined;
-    if (item.variantId?.trim()) {
+    const variantId = item.variantId?.trim();
+    const variantName = item.variantName?.trim();
+    if (variantId) {
       variant = activeVariants.find(
-        (candidate) => this.variantId(candidate) === item.variantId!.trim(),
+        (candidate) => this.variantId(candidate) === variantId,
       );
-    } else if (item.variantName?.trim()) {
+    } else if (variantName) {
       variant = activeVariants.find(
-        (candidate) => candidate.name === item.variantName!.trim(),
+        (candidate) => candidate.name === variantName,
       );
     } else if (activeVariants.length === 1) {
       [variant] = activeVariants;

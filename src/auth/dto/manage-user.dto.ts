@@ -7,7 +7,8 @@ import {
   MaxLength,
   MinLength,
 } from 'class-validator';
-import { USER_ROLES, UserRole } from '../auth.constants';
+import { USER_ROLES } from '../auth.constants';
+import type { UserRole } from '../auth.constants';
 
 export class CreateUserDto {
   @IsString()

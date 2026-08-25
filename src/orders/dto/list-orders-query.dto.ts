@@ -10,14 +10,8 @@ import {
   MaxLength,
   Min,
 } from 'class-validator';
-import {
-  ORDER_STATUSES,
-  ORDER_TYPES,
-  PAYMENT_METHODS,
-  OrderStatus,
-  OrderType,
-  PaymentMethod,
-} from '../orders.schema';
+import { ORDER_STATUSES, ORDER_TYPES, PAYMENT_METHODS } from '../orders.schema';
+import type { OrderStatus, OrderType, PaymentMethod } from '../orders.schema';
 
 export class ListOrdersQueryDto {
   @IsOptional()

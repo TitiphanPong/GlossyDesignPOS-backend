@@ -42,11 +42,16 @@ export class RunningNumberService {
     const year = this.getYear(now);
     const counter = await this.counterModel.findOneAndUpdate(
       { type: COUNTER_TYPE_TAX_INVOICE, year },
-      { $inc: { seq: 1 }, $setOnInsert: { type: COUNTER_TYPE_TAX_INVOICE, year } },
+      {
+        $inc: { seq: 1 },
+        $setOnInsert: { type: COUNTER_TYPE_TAX_INVOICE, year },
+      },
       { new: true, upsert: true },
     );
     if (!counter) {
-      throw new InternalServerErrorException('Failed to generate tax invoice number.');
+      throw new InternalServerErrorException(
+        'Failed to generate tax invoice number.',
+      );
     }
     return `INV-${year}-${counter.seq.toString().padStart(6, '0')}`;
   }
