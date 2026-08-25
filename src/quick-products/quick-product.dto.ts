@@ -1,12 +1,17 @@
 import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  ArrayNotEmpty,
+  IsArray,
   IsBoolean,
+  IsMongoId,
   IsNotEmpty,
   IsNumber,
   IsOptional,
   IsString,
   MaxLength,
   Min,
+  ValidateNested,
 } from 'class-validator';
 
 export class CreateQuickProductDto {
@@ -43,4 +48,18 @@ export class UpdateQuickProductDto {
   @IsNumber()
   @Min(0)
   quickSaleSortOrder?: number;
+}
+
+export class ReorderQuickProductItemDto {
+  @IsMongoId() id!: string;
+  @Type(() => Number) @IsNumber() @Min(0) quickSaleSortOrder!: number;
+}
+
+export class ReorderQuickProductsDto {
+  @IsArray()
+  @ArrayNotEmpty()
+  @ArrayMaxSize(500)
+  @ValidateNested({ each: true })
+  @Type(() => ReorderQuickProductItemDto)
+  items!: ReorderQuickProductItemDto[];
 }

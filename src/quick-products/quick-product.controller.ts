@@ -13,6 +13,7 @@ import { QuickProduct } from './quick-product.schema';
 import { QuickProductService } from './quick-product.service';
 import {
   CreateQuickProductDto,
+  ReorderQuickProductsDto,
   UpdateQuickProductDto,
 } from './quick-product.dto';
 import { Roles } from '../auth/auth.decorators';
@@ -48,6 +49,22 @@ export class QuickProductController {
       { type: 'quick-product', id: product.code },
     );
     return product;
+  }
+
+  // Must stay above @Patch(':id') so 'reorder' is not captured as an id.
+  @Patch('reorder')
+  @Roles('manager', 'admin')
+  async reorder(
+    @Body() dto: ReorderQuickProductsDto,
+    @Request() request: AuthRequest,
+  ) {
+    const products = await this.quickProductService.reorder(dto.items);
+    await this.auditService.record(
+      request.user ?? null,
+      'quick-product.reorder',
+      { type: 'quick-product', id: `${dto.items.length} items` },
+    );
+    return products;
   }
 
   @Patch(':id')

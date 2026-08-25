@@ -8,6 +8,7 @@ import { Model } from 'mongoose';
 import { QuickProduct, QuickProductDocument } from './quick-product.schema';
 import {
   CreateQuickProductDto,
+  ReorderQuickProductItemDto,
   UpdateQuickProductDto,
 } from './quick-product.dto';
 
@@ -78,6 +79,19 @@ export class QuickProductService {
     const product = await this.quickProductModel.findByIdAndDelete(id).exec();
     if (!product) throw new NotFoundException('Quick menu not found');
     return product;
+  }
+
+  async reorder(items: ReorderQuickProductItemDto[]): Promise<QuickProduct[]> {
+    await this.quickProductModel.bulkWrite(
+      items.map((item) => ({
+        updateOne: {
+          filter: { _id: item.id },
+          update: { $set: { quickSaleSortOrder: item.quickSaleSortOrder } },
+        },
+      })),
+      { ordered: false },
+    );
+    return this.findAll(true);
   }
 
   private slugify(value: string): string {
