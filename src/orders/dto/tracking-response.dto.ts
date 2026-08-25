@@ -58,6 +58,9 @@ export class TrackingOrderResponseDto {
   orderId!: string;
   orderNumber?: string;
   invoiceNumber?: string;
+  bookNo?: string;
+  invoiceSequence?: string;
+  invoicePeriod?: string;
   status!: OrderStatus;
   customerName!: string;
   phoneNumber?: string;

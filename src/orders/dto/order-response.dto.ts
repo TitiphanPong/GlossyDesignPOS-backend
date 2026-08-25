@@ -56,6 +56,9 @@ export class OrderResponseDto {
   backdatedReason?: string;
   orderNumber?: string;
   invoiceNumber?: string;
+  bookNo?: string;
+  invoiceSequence?: string;
+  invoicePeriod?: string;
   customerName!: string;
   companyName?: string;
   phoneNumber!: string;

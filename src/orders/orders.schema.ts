@@ -52,6 +52,15 @@ export class Order {
   @Prop({ unique: true, sparse: true })
   invoiceNumber?: string;
 
+  @Prop({ match: /^\d{3}$/ })
+  bookNo?: string;
+
+  @Prop({ match: /^\d{3}$/ })
+  invoiceSequence?: string;
+
+  @Prop({ match: /^\d{6}$/ })
+  invoicePeriod?: string;
+
   @Prop()
   customerName!: string;
 

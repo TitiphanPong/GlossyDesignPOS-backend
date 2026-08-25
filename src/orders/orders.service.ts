@@ -280,9 +280,26 @@ export class OrdersService {
       return this.toOrderResponse(existing);
     }
 
+    const existingIssueDate =
+      existing.saleDate ??
+      (existing.toObject() as OrderPlainObject).createdAt ??
+      new Date();
+    const taxInvoiceNumber =
+      existing.invoiceNumber &&
+      existing.bookNo &&
+      existing.invoiceSequence &&
+      existing.invoicePeriod
+        ? undefined
+        : await this.runningNumberService.generateTaxInvoiceNumber(
+            existingIssueDate,
+          );
     const invoiceNumber =
-      existing.invoiceNumber ??
-      (await this.runningNumberService.generateTaxInvoiceNumber());
+      existing.invoiceNumber ?? taxInvoiceNumber?.invoiceNumber;
+    const bookNo = existing.bookNo ?? taxInvoiceNumber?.bookNo;
+    const invoiceSequence =
+      existing.invoiceSequence ?? taxInvoiceNumber?.invoiceSequence;
+    const invoicePeriod =
+      existing.invoicePeriod ?? taxInvoiceNumber?.invoicePeriod;
     const paidAmount = Number(existing.paidAmount) || 0;
     const remainingTotal = Math.max(
       0,
@@ -301,6 +318,9 @@ export class OrdersService {
           $set: {
             taxInvoice: 'yes',
             invoiceNumber,
+            ...(bookNo ? { bookNo } : {}),
+            ...(invoiceSequence ? { invoiceSequence } : {}),
+            ...(invoicePeriod ? { invoicePeriod } : {}),
             vatAmount,
             grandTotal,
             remainingTotal,
@@ -538,9 +558,11 @@ export class OrdersService {
       actorRole,
     );
     const orderNumber = await this.runningNumberService.generateOrderNumber();
-    const invoiceNumber =
+    const taxInvoiceNumber =
       normalizedOrder.taxInvoice === 'yes'
-        ? await this.runningNumberService.generateTaxInvoiceNumber()
+        ? await this.runningNumberService.generateTaxInvoiceNumber(
+            normalizedOrder.saleDate,
+          )
         : undefined;
     const status = normalizedOrder.status ?? 'pending';
     const createdOrder = new this.orderModel({
@@ -552,7 +574,14 @@ export class OrdersService {
         ? { idempotencyKey: identity.idempotencyKey }
         : {}),
       orderNumber,
-      ...(invoiceNumber ? { invoiceNumber } : {}),
+      ...(taxInvoiceNumber
+        ? {
+            invoiceNumber: taxInvoiceNumber.invoiceNumber,
+            bookNo: taxInvoiceNumber.bookNo,
+            invoiceSequence: taxInvoiceNumber.invoiceSequence,
+            invoicePeriod: taxInvoiceNumber.invoicePeriod,
+          }
+        : {}),
       status,
       statusHistory: [{ status, changedAt: new Date() }],
     });
@@ -898,6 +927,9 @@ export class OrdersService {
       orderId: plain.orderId ?? id,
       orderNumber: plain.orderNumber,
       invoiceNumber: plain.invoiceNumber,
+      bookNo: plain.bookNo,
+      invoiceSequence: plain.invoiceSequence,
+      invoicePeriod: plain.invoicePeriod,
       status: plain.status,
       customerName: plain.customerName,
       phoneNumber: plain.phoneNumber
@@ -1012,6 +1044,9 @@ export class OrdersService {
       backdatedReason: plain.backdatedReason,
       orderNumber: plain.orderNumber,
       invoiceNumber: plain.invoiceNumber,
+      bookNo: plain.bookNo,
+      invoiceSequence: plain.invoiceSequence,
+      invoicePeriod: plain.invoicePeriod,
       customerName: plain.customerName,
       companyName: plain.companyName,
       phoneNumber: plain.phoneNumber,

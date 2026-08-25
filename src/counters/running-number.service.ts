@@ -8,6 +8,15 @@ import {
   COUNTER_TYPE_TAX_INVOICE,
 } from './counters.schema';
 
+export type TaxInvoiceNumber = {
+  invoiceNumber: string;
+  bookNo: string;
+  invoiceSequence: string;
+  invoicePeriod: string;
+};
+
+const INVOICES_PER_BOOK = 100;
+
 @Injectable()
 export class RunningNumberService {
   constructor(
@@ -38,13 +47,19 @@ export class RunningNumberService {
     return `GD-${year}-${counter.seq.toString().padStart(6, '0')}`;
   }
 
-  async generateTaxInvoiceNumber(now: Date = new Date()): Promise<string> {
-    const year = this.getYear(now);
+  async generateTaxInvoiceNumber(
+    issuedAt: Date = new Date(),
+  ): Promise<TaxInvoiceNumber> {
+    const invoicePeriod = this.getInvoicePeriod(issuedAt);
+    const counterPeriod = Number(invoicePeriod);
     const counter = await this.counterModel.findOneAndUpdate(
-      { type: COUNTER_TYPE_TAX_INVOICE, year },
+      { type: COUNTER_TYPE_TAX_INVOICE, year: counterPeriod },
       {
         $inc: { seq: 1 },
-        $setOnInsert: { type: COUNTER_TYPE_TAX_INVOICE, year },
+        $setOnInsert: {
+          type: COUNTER_TYPE_TAX_INVOICE,
+          year: counterPeriod,
+        },
       },
       { new: true, upsert: true },
     );
@@ -53,7 +68,18 @@ export class RunningNumberService {
         'Failed to generate tax invoice number.',
       );
     }
-    return `INV-${year}-${counter.seq.toString().padStart(6, '0')}`;
+
+    const bookNumber = Math.floor((counter.seq - 1) / INVOICES_PER_BOOK) + 1;
+    const invoiceNumber = ((counter.seq - 1) % INVOICES_PER_BOOK) + 1;
+    const bookNo = bookNumber.toString().padStart(3, '0');
+    const invoiceSequence = invoiceNumber.toString().padStart(3, '0');
+
+    return {
+      invoiceNumber: `INV-${invoicePeriod}-${bookNo}-${invoiceSequence}`,
+      bookNo,
+      invoiceSequence,
+      invoicePeriod,
+    };
   }
 
   private getYear(date: Date): number {
@@ -72,5 +98,24 @@ export class RunningNumberService {
     }
 
     return Number(year);
+  }
+
+  private getInvoicePeriod(date: Date): string {
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: process.env.ORDER_NUMBER_TIMEZONE ?? 'Asia/Bangkok',
+      year: 'numeric',
+      month: '2-digit',
+    });
+    const parts = formatter.formatToParts(date);
+    const year = parts.find((part) => part.type === 'year')?.value;
+    const month = parts.find((part) => part.type === 'month')?.value;
+
+    if (!year || !month) {
+      throw new InternalServerErrorException(
+        'Failed to format tax invoice period.',
+      );
+    }
+
+    return `${year}${month}`;
   }
 }
