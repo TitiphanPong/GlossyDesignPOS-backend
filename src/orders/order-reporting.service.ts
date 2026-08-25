@@ -170,6 +170,10 @@ function formatMoney(value: number): string {
   }).format(value);
 }
 
+function formatPdfMoney(value: number): string {
+  return `฿${formatMoney(value)}`;
+}
+
 function formatDate(value?: Date): string {
   if (!value) return '-';
   return new Intl.DateTimeFormat('th-TH', {
@@ -491,7 +495,7 @@ export class OrderReportingService {
     return {
       buffer: await this.buildPdf(orders, summary, query.saleMonth),
       contentType: 'application/pdf',
-      filename: `orders-${filenamePeriod}.pdf`,
+      filename: `GlossyPOS-Sales-Statement-${filenamePeriod}.pdf`,
       count: orders.length,
     };
   }
@@ -850,9 +854,13 @@ export class OrderReportingService {
     return new Promise((resolve, reject) => {
       const document = new PDFDocument({
         size: 'A4',
-        layout: 'landscape',
-        margin: 32,
-        info: { Title: `Orders ${saleMonth ?? 'all'}`, Author: 'Glossy POS' },
+        layout: 'portrait',
+        margin: 45,
+        bufferPages: true,
+        info: {
+          Title: `Glossy POS Sales Statement ${saleMonth ?? 'all'}`,
+          Author: 'Glossy POS',
+        },
       });
       const chunks: Buffer[] = [];
       document.on('data', (chunk: Buffer) => chunks.push(chunk));
@@ -862,135 +870,296 @@ export class OrderReportingService {
       document.registerFont('Thai', thaiFont);
       document.registerFont('ThaiBold', thaiFont);
 
-      document.rect(0, 0, document.page.width, 88).fill('#1E5EFF');
-      document
-        .fillColor('#FFFFFF')
-        .font('ThaiBold')
-        .fontSize(21)
-        .text('รายงานยอดขายและรายการงาน', 32, 26);
-      document
-        .font('Thai')
-        .fontSize(10)
-        .text(
-          `ช่วงเวลา: ${saleMonth ?? 'ทั้งหมด'} | สร้างเมื่อ ${formatDate(new Date())}`,
-          32,
-          58,
-        );
-      document.fillColor('#102A43');
-      const cards = [
-        ['ยอดขาย', formatMoney(summary.sales)],
-        ['ยอดรับ', formatMoney(summary.collections)],
-        ['ยอดค้าง', formatMoney(summary.outstanding)],
-        ['งานทั้งหมด', String(summary.orders)],
-        ['ยกเลิก', String(summary.cancelledOrders)],
-      ];
-      cards.forEach(([label, value], index) => {
-        const x = 32 + index * 153;
-        document.roundedRect(x, 104, 137, 54, 6).fill('#F4F7FB');
-        document
-          .fillColor('#64748B')
-          .font('Thai')
-          .fontSize(9)
-          .text(label, x + 10, 114);
-        document
-          .fillColor('#102A43')
-          .font('ThaiBold')
-          .fontSize(14)
-          .text(value, x + 10, 132, { width: 117 });
-      });
-
+      const pageWidth = document.page.width;
+      const pageHeight = document.page.height;
+      const left = document.page.margins.left;
+      const contentWidth = pageWidth - left - document.page.margins.right;
+      const footerTop = pageHeight - 62;
+      const navy = '#16354D';
+      const text = '#172033';
+      const muted = '#64748B';
+      const border = '#D9E2EA';
+      const tableHeaderHeight = 24;
       const columns = [
-        { label: 'วันที่ขาย', width: 88 },
-        { label: 'เลขที่งาน', width: 105 },
-        { label: 'ลูกค้า', width: 170 },
-        { label: 'สถานะ', width: 105 },
-        { label: 'ยอดรวม', width: 95 },
-        { label: 'ยอดรับ', width: 95 },
-        { label: 'ยอดค้าง', width: 95 },
+        { label: 'วันที่ / เวลา', width: 67 },
+        { label: 'เลขที่งาน', width: 91 },
+        { label: 'รายการ', width: 177 },
+        { label: 'ลูกค้า', width: 100 },
+        { label: 'ยอดรวม', width: contentWidth - 435 },
       ];
-      const left = 32;
       const tableWidth = columns.reduce((sum, column) => sum + column.width, 0);
-      let y = 178;
-      let pageNumber = 1;
-      const drawFooter = () => {
-        const bottomMargin = document.page.margins.bottom;
-        document.page.margins.bottom = 0;
+      const reportDate = new Date();
+      const periodLabelText = saleMonth
+        ? periodLabel('month', monthRange(saleMonth))
+        : 'ทั้งหมด';
+      const fullDate = new Intl.DateTimeFormat('th-TH-u-ca-buddhist', {
+        dateStyle: 'long',
+        timeStyle: 'short',
+        timeZone: 'Asia/Bangkok',
+      }).format(reportDate);
+      const compactDate = (value?: Date): string => {
+        if (!value) return '-';
+        return new Intl.DateTimeFormat('th-TH-u-ca-buddhist', {
+          day: '2-digit',
+          month: '2-digit',
+          year: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false,
+          timeZone: 'Asia/Bangkok',
+        }).format(value);
+      };
+      const drawDocumentHeader = () => {
         document
-          .fillColor('#94A3B8')
+          .fillColor(navy)
+          .font('ThaiBold')
+          .fontSize(15)
+          .text('GLOSSY POS', left, 45);
+        document
+          .fillColor(text)
+          .font('ThaiBold')
+          .fontSize(13)
+          .text('รายงานสรุปรายการขาย', left, 69);
+        document
+          .fillColor(muted)
           .font('Thai')
           .fontSize(8)
-          .text(`หน้า ${pageNumber}`, 32, document.page.height - 24, {
-            width: document.page.width - 64,
+          .text('SALES STATEMENT', left, 88);
+        document
+          .fillColor(muted)
+          .font('Thai')
+          .fontSize(8)
+          .text(`รอบรายการ: ${periodLabelText}`, pageWidth - 220, 51, {
+            width: 175,
             align: 'right',
-            lineBreak: false,
           });
-        document.page.margins.bottom = bottomMargin;
+        document.text(`วันที่ออกรายงาน: ${fullDate}`, pageWidth - 220, 67, {
+          width: 175,
+          align: 'right',
+        });
+        document.text('สกุลเงิน: THB', pageWidth - 220, 83, {
+          width: 175,
+          align: 'right',
+        });
+        document
+          .moveTo(left, 108)
+          .lineTo(pageWidth - left, 108)
+          .lineWidth(0.8)
+          .stroke(border);
+        document
+          .fillColor(text)
+          .font('ThaiBold')
+          .fontSize(9.5)
+          .text('สรุปรายงาน', left, 124);
+        document
+          .fillColor(muted)
+          .font('Thai')
+          .fontSize(8)
+          .text('จำนวนรายการ', left, 143);
+        document
+          .fillColor(text)
+          .font('ThaiBold')
+          .fontSize(10)
+          .text(`${summary.orders} รายการ`, left + 75, 143);
+        document
+          .fillColor(muted)
+          .font('Thai')
+          .fontSize(8)
+          .text('ยอดขายรวม', left + 190, 143);
+        document
+          .fillColor(text)
+          .font('ThaiBold')
+          .fontSize(10)
+          .text(formatPdfMoney(summary.sales), left + 255, 143);
+        document
+          .fillColor(muted)
+          .font('Thai')
+          .fontSize(8)
+          .text('ยอดรับชำระ', left + 365, 143);
+        document
+          .fillColor(text)
+          .font('ThaiBold')
+          .fontSize(10)
+          .text(formatPdfMoney(summary.collections), left + 430, 143, {
+            width: contentWidth - 430,
+            align: 'right',
+          });
+        document
+          .moveTo(left, 162)
+          .lineTo(pageWidth - left, 162)
+          .lineWidth(0.8)
+          .stroke(border);
       };
-      const drawHeader = () => {
-        document.rect(left, y, tableWidth, 26).fill('#2A4365');
+      const drawTableHeader = (top: number) => {
+        document.rect(left, top, tableWidth, tableHeaderHeight).fill(navy);
         let x = left;
-        document.fillColor('#FFFFFF').font('ThaiBold').fontSize(9);
+        document.fillColor('#FFFFFF').font('ThaiBold').fontSize(7.5);
         for (const column of columns) {
-          document.text(column.label, x + 5, y + 7, {
+          document.text(column.label, x + 5, top + 7, {
             width: column.width - 10,
-            align: column.label.startsWith('ยอด') ? 'right' : 'left',
+            align: column.label === 'ยอดรวม' ? 'right' : 'left',
+            lineBreak: false,
           });
           x += column.width;
         }
-        y += 26;
+        return top + tableHeaderHeight;
       };
-      drawHeader();
+      drawDocumentHeader();
+      let y = drawTableHeader(178);
+      const startContinuationPage = () => {
+        document.addPage();
+        y = 45;
+        document
+          .fillColor(navy)
+          .font('ThaiBold')
+          .fontSize(10)
+          .text('รายงานสรุปรายการขาย / SALES STATEMENT', left, y);
+        document
+          .fillColor(muted)
+          .font('Thai')
+          .fontSize(8)
+          .text(`รอบรายการ: ${periodLabelText}`, pageWidth - 220, y + 1, {
+            width: 175,
+            align: 'right',
+          });
+        y += 26;
+        y = drawTableHeader(y);
+      };
       orders.forEach((order, index) => {
         const total = Number(order.grandTotal ?? order.total ?? 0);
-        const paid = Number(order.paidAmount ?? order.depositTotal ?? 0);
-        const remaining =
-          order.status === 'cancelled'
-            ? 0
-            : Number(order.remainingTotal ?? Math.max(total - paid, 0));
-        const values = [
-          formatDate(order.saleDate ?? order.createdAt),
-          String(order.orderNumber ?? order.orderId ?? order._id),
+        const itemLines = (order.cart ?? []).map(
+          (item) =>
+            `${String(item.name ?? item.category ?? '-')} x${Number(item.qty ?? 0)}`,
+        );
+        const itemText = itemLines.join('\n') || '-';
+        document.font('Thai').fontSize(7.5);
+        const itemHeight = document.heightOfString(itemText, {
+          width: columns[2].width - 10,
+          lineGap: 1,
+        });
+        const customerHeight = document.heightOfString(
           String(order.customerName ?? '-'),
-          String(order.status),
-          formatMoney(total),
-          formatMoney(paid),
-          formatMoney(remaining),
-        ];
-        const rowHeight = 28;
-        if (y + rowHeight > document.page.height - 45) {
-          drawFooter();
-          document.addPage();
-          pageNumber += 1;
-          y = 32;
-          drawHeader();
-        }
+          { width: columns[3].width - 10, lineGap: 1 },
+        );
+        const rowHeight = Math.max(
+          27,
+          Math.ceil(Math.max(itemHeight, customerHeight) + 12),
+        );
+        if (y + rowHeight > footerTop) startContinuationPage();
         document
           .rect(left, y, tableWidth, rowHeight)
-          .fill(index % 2 ? '#F8FAFC' : '#FFFFFF');
+          .fill(index % 2 ? '#F7F9FB' : '#FFFFFF');
+        document
+          .moveTo(left, y + rowHeight)
+          .lineTo(left + tableWidth, y + rowHeight)
+          .lineWidth(0.45)
+          .stroke(border);
+        const values = [
+          compactDate(order.saleDate ?? order.createdAt),
+          String(order.orderNumber ?? order.orderId ?? order._id),
+          itemText,
+          String(order.customerName ?? '-'),
+          formatPdfMoney(total),
+        ];
         let x = left;
-        document.fillColor('#334155').font('Thai').fontSize(8.5);
         values.forEach((value, columnIndex) => {
-          document.text(value, x + 5, y + 7, {
-            width: columns[columnIndex].width - 10,
-            height: rowHeight - 10,
-            ellipsis: true,
-            align: columnIndex >= 4 ? 'right' : 'left',
-          });
+          document
+            .fillColor(text)
+            .font('Thai')
+            .fontSize(7.5)
+            .text(value, x + 5, y + 6, {
+              width: columns[columnIndex].width - 10,
+              height: rowHeight - 8,
+              lineGap: 1,
+              align: columnIndex === values.length - 1 ? 'right' : 'left',
+            });
           x += columns[columnIndex].width;
         });
         y += rowHeight;
       });
       if (orders.length === 0) {
         document
-          .fillColor('#64748B')
+          .fillColor(muted)
           .font('Thai')
-          .fontSize(11)
-          .text('ไม่พบรายการตามตัวกรอง', left, y + 18, {
+          .fontSize(9)
+          .text('ไม่พบรายการขายในช่วงเวลาที่เลือก', left, y + 18, {
             width: tableWidth,
             align: 'center',
           });
+        y += 55;
       }
-      drawFooter();
+      const summaryHeight = 104;
+      if (y + summaryHeight > footerTop) startContinuationPage();
+      document
+        .moveTo(left, y + 12)
+        .lineTo(pageWidth - left, y + 12)
+        .lineWidth(0.8)
+        .stroke(border);
+      document
+        .fillColor(text)
+        .font('ThaiBold')
+        .fontSize(9.5)
+        .text('สรุปยอดท้ายรายงาน', left, y + 27);
+      document
+        .fillColor(muted)
+        .font('Thai')
+        .fontSize(8)
+        .text(`จำนวนรายการทั้งหมด: ${summary.orders} รายการ`, left, y + 48);
+      document
+        .fillColor(muted)
+        .font('Thai')
+        .fontSize(8)
+        .text('ยอดขายรวม', left + 295, y + 43, { width: 90, align: 'right' });
+      document
+        .fillColor(text)
+        .font('ThaiBold')
+        .fontSize(8.5)
+        .text(formatPdfMoney(summary.sales), left + 390, y + 43, {
+          width: contentWidth - 390,
+          align: 'right',
+        });
+      document
+        .fillColor(muted)
+        .font('Thai')
+        .fontSize(8)
+        .text('ยอดรับชำระ', left + 295, y + 59, { width: 90, align: 'right' });
+      document.text(formatPdfMoney(summary.collections), left + 390, y + 59, {
+        width: contentWidth - 390,
+        align: 'right',
+      });
+      document.text('ยอดค้างชำระ', left + 295, y + 75, {
+        width: 90,
+        align: 'right',
+      });
+      document.text(formatPdfMoney(summary.outstanding), left + 390, y + 75, {
+        width: contentWidth - 390,
+        align: 'right',
+      });
+      const pageRange = document.bufferedPageRange();
+      for (let pageIndex = 0; pageIndex < pageRange.count; pageIndex += 1) {
+        document.switchToPage(pageRange.start + pageIndex);
+        const pageBottomMargin = document.page.margins.bottom;
+        document.page.margins.bottom = 0;
+        document
+          .moveTo(left, footerTop)
+          .lineTo(pageWidth - left, footerTop)
+          .lineWidth(0.6)
+          .stroke(border);
+        document
+          .fillColor(muted)
+          .font('Thai')
+          .fontSize(7)
+          .text('Glossy POS • Sales Statement', left, footerTop + 10, {
+            lineBreak: false,
+          });
+        document.text(
+          `หน้า ${pageIndex + 1} / ${pageRange.count}`,
+          pageWidth - 155,
+          footerTop + 10,
+          { width: 110, align: 'right', lineBreak: false },
+        );
+        document.page.margins.bottom = pageBottomMargin;
+      }
       document.end();
     });
   }

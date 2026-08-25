@@ -87,4 +87,28 @@ describe('OrderReportingService', () => {
     expect(buffer.subarray(0, 5).toString()).toBe('%PDF-');
     expect(buffer.length).toBeGreaterThan(5_000);
   });
+
+  it('creates a paginated PDF for long reports and keeps multiple items in one row', async () => {
+    const manyOrders = Array.from({ length: 100 }, (_, index) => ({
+      ...orders[0],
+      orderId: `order-${index + 1}`,
+      orderNumber: `GD-2026-${String(index + 1).padStart(6, '0')}`,
+      cart: [
+        { name: 'ถ่ายเอกสาร A4 ขาวดำ', qty: 3 },
+        { name: 'ปริ้น A4 ขาวดำ', qty: 1 },
+        { name: 'สแกนเอกสาร', qty: 2 },
+      ],
+    }));
+    const buffer = await builders.buildPdf(
+      manyOrders,
+      { ...summary, orders: 100 },
+      '2026-08',
+    );
+    const pageCount =
+      buffer.toString('latin1').match(/\/Type \/Page\b/g)?.length ?? 0;
+
+    expect(pageCount).toBeGreaterThan(1);
+    expect(pageCount).toBeLessThan(10);
+    expect(buffer.length).toBeGreaterThan(20_000);
+  });
 });
