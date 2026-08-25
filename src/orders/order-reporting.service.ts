@@ -236,6 +236,7 @@ export class OrderReportingService {
         { orderId: { $regex: pattern, $options: 'i' } },
         { customerName: { $regex: pattern, $options: 'i' } },
         { phoneNumber: { $regex: pattern, $options: 'i' } },
+        { 'cart.name': { $regex: pattern, $options: 'i' } },
       ];
     }
     if (query.status) filter.status = query.status;
