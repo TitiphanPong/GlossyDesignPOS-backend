@@ -12,8 +12,8 @@ import {
   NotificationResponseDto,
   ListNotificationsQueryDto,
   NotificationCountDto,
-  ResolveNotificationDto,
   MarkNotificationReadDto,
+  ActiveNotificationsQueryDto,
 } from './dto/notification.dto';
 
 @Controller('notifications')
@@ -26,9 +26,9 @@ export class NotificationsController {
    */
   @Get('active')
   async getActive(
-    @Query('category') category?: string,
+    @Query() query: ActiveNotificationsQueryDto,
   ): Promise<NotificationResponseDto[]> {
-    return this.notificationsService.getActiveNotifications(category as any);
+    return this.notificationsService.getActiveNotifications(query.category);
   }
 
   /**
@@ -66,11 +66,8 @@ export class NotificationsController {
    * PATCH /notifications/:id/resolve
    */
   @Patch(':id/resolve')
-  async resolve(
-    @Param('id') id: string,
-    @Body() body: ResolveNotificationDto,
-  ): Promise<NotificationResponseDto> {
-    return this.notificationsService.resolveNotification(id, body.reason);
+  async resolve(@Param('id') id: string): Promise<NotificationResponseDto> {
+    return this.notificationsService.resolveNotification(id);
   }
 
   /**

@@ -6,6 +6,7 @@ import { AuditService } from '../src/auth/audit.service';
 import { AuthService } from '../src/auth/auth.service';
 import { HttpExceptionFilter } from '../src/common/filters/http-exception.filter';
 import { RunningNumberService } from '../src/counters/running-number.service';
+import { NotificationsService } from '../src/notifications/notifications.service';
 import { OrdersController } from '../src/orders/orders.controller';
 import { OrderPricingService } from '../src/orders/order-pricing.service';
 import { Order } from '../src/orders/orders.schema';
@@ -36,7 +37,7 @@ describe('authoritative order financial pipeline (integration)', () => {
     }
 
     toObject(): Record<string, unknown> {
-      return { ...this, _id: this._id } as Record<string, unknown>;
+      return { ...this, _id: this._id } as unknown as Record<string, unknown>;
     }
   }
 
@@ -89,6 +90,15 @@ describe('authoritative order financial pipeline (integration)', () => {
             asObservable: jest.fn(),
           },
         },
+        {
+          provide: NotificationsService,
+          useValue: {
+            autoResolvePaymentNotifications: jest.fn(),
+            createNotification: jest.fn(),
+            handleOrderPaymentState: jest.fn(),
+            handleOrderStatusChange: jest.fn(),
+          },
+        },
         { provide: AuditService, useValue: { record: jest.fn() } },
         { provide: AuthService, useValue: { confirmPassword: jest.fn() } },
       ],
@@ -108,7 +118,7 @@ describe('authoritative order financial pipeline (integration)', () => {
   });
 
   afterAll(async () => {
-    await app.close();
+    await app?.close();
   });
 
   beforeEach(() => {

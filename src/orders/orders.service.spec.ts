@@ -1,10 +1,13 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Model } from 'mongoose';
 import { RunningNumberService } from '../counters/running-number.service';
-import { OrderDocument } from './orders.schema';
+import type { OrderDocument, OrderStatus } from './orders.schema';
 import { OrdersSseService } from './orders.sse.service';
 import { OrdersService } from './orders.service';
 import { OrderPricingService } from './order-pricing.service';
+import { OrderReportingService } from './order-reporting.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import type { OrderResponseDto } from './dto/order-response.dto';
 
 type FindByIdAndUpdateArgs = [
   string,
@@ -43,12 +46,21 @@ describe('OrdersService', () => {
     ),
   } as unknown as OrderPricingService;
 
+  const handleOrderStatusChange = jest.fn().mockResolvedValue(undefined);
+  const notificationsService = {
+    autoResolvePaymentNotifications: jest.fn().mockResolvedValue(undefined),
+    createNotification: jest.fn().mockResolvedValue(undefined),
+    handleOrderPaymentState: jest.fn().mockResolvedValue(undefined),
+    handleOrderStatusChange,
+  } as unknown as NotificationsService;
+
   let findByIdAndUpdate: jest.MockedFunction<
     OrderModelLike['findByIdAndUpdate']
   >;
   let service: OrdersService;
 
   beforeEach(() => {
+    jest.clearAllMocks();
     findByIdAndUpdate = jest.fn();
 
     const orderModel: OrderModelLike = {
@@ -60,7 +72,31 @@ describe('OrdersService', () => {
       runningNumberService,
       ordersSse,
       orderPricing,
+      undefined as unknown as OrderReportingService,
+      notificationsService,
     );
+  });
+
+  it('forwards complete order context to status notifications', () => {
+    const response = {
+      _id: validOrderId,
+      orderNumber: 'GL-20260825-0001',
+      customerName: 'Test customer',
+      status: 'ready_for_pickup',
+    } as OrderResponseDto;
+
+    (
+      service as unknown as {
+        emitForStatus(response: OrderResponseDto, status: OrderStatus): void;
+      }
+    ).emitForStatus(response, 'ready_for_pickup');
+
+    expect(handleOrderStatusChange).toHaveBeenCalledWith({
+      _id: validOrderId,
+      status: 'ready_for_pickup',
+      orderNumber: 'GL-20260825-0001',
+      customerName: 'Test customer',
+    });
   });
 
   it('updates only invoice customer fields and mirrors legacy aliases', async () => {

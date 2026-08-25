@@ -3,6 +3,7 @@ import {
   ConflictException,
   Injectable,
   InternalServerErrorException,
+  Logger,
   NotFoundException,
   Optional,
 } from '@nestjs/common';
@@ -35,6 +36,7 @@ import {
 } from './order-money';
 import { OrderPricingService } from './order-pricing.service';
 import { UserRole } from '../auth/auth.constants';
+import { NotificationsService } from '../notifications/notifications.service';
 import {
   OrderReportingService,
   OrderReportSummary,
@@ -62,13 +64,15 @@ const REGEX_SPECIAL_CHARS = /[.*+?^${}()|[\]\\]/g;
 
 @Injectable()
 export class OrdersService {
+  private readonly logger = new Logger(OrdersService.name);
+
   constructor(
     @InjectModel(Order.name) private readonly orderModel: Model<OrderDocument>,
     private readonly runningNumberService: RunningNumberService,
     private readonly ordersSse: OrdersSseService,
     private readonly orderPricing: OrderPricingService,
     @Optional() private readonly orderReporting: OrderReportingService,
-    @Optional() private readonly notificationsService?: any,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   async create(
@@ -402,19 +406,17 @@ export class OrdersService {
       this.ordersSse.emitOrder(response);
     }
 
-    // Handle payment notifications
-    if (this.notificationsService) {
-      try {
-        if (order.remainingTotal === 0) {
-          // Payment cleared - resolve payment notifications
-          await this.notificationsService.autoResolvePaymentNotifications(id);
-        } else {
-          // Create outstanding payment notification
-          await this.notificationsService.handleOrderPaymentState(updated);
-        }
-      } catch (error) {
-        console.error('Failed to handle payment notification:', error);
+    try {
+      if (order.remainingTotal === 0) {
+        await this.notificationsService.autoResolvePaymentNotifications(id);
+      } else {
+        await this.notificationsService.handleOrderPaymentState(updated);
       }
+    } catch (error) {
+      this.logger.error(
+        'Failed to handle payment notification',
+        error instanceof Error ? error.stack : String(error),
+      );
     }
 
     return response;
@@ -560,30 +562,30 @@ export class OrdersService {
     const response = this.toOrderResponse(saved);
     this.ordersSse.emitOrder(response);
 
-    // Trigger notification for new order
-    if (this.notificationsService) {
-      try {
-        await this.notificationsService.createNotification({
-          type: 'order_created',
-          category: 'action_required',
-          priority: 'high',
-          title: `รายการขายใหม่ #${saved.orderNumber}`,
-          message: `${saved.customerName || 'ลูกค้า'} รอการยืนยัน`,
-          orderId: String(saved._id),
-          orderCode: saved.orderNumber,
-          customerName: saved.customerName,
-          entityType: 'order',
-          entityId: String(saved._id),
-          notificationKey: `order_created:${saved._id}`,
-          action: {
-            label: 'ยืนยันรายการ',
-            href: `/home/orders/${saved._id}`,
-          },
-        });
-      } catch (error) {
-        // Log but don't fail order creation if notification fails
-        console.error('Failed to create notification for new order:', error);
-      }
+    try {
+      const savedOrderId = String(saved._id);
+      await this.notificationsService.createNotification({
+        type: 'order_created',
+        category: 'action_required',
+        priority: 'high',
+        title: `รายการขายใหม่ #${saved.orderNumber}`,
+        message: `${saved.customerName || 'ลูกค้า'} รอการยืนยัน`,
+        orderId: savedOrderId,
+        orderCode: saved.orderNumber,
+        customerName: saved.customerName,
+        entityType: 'order',
+        entityId: savedOrderId,
+        notificationKey: `order_created:${savedOrderId}`,
+        action: {
+          label: 'ยืนยันรายการ',
+          href: `/home/orders/${savedOrderId}`,
+        },
+      });
+    } catch (error) {
+      this.logger.error(
+        'Failed to create notification for new order',
+        error instanceof Error ? error.stack : String(error),
+      );
     }
 
     return response;
@@ -971,21 +973,19 @@ export class OrdersService {
       this.ordersSse.emitOrder(null);
     }
 
-    // Handle status change notifications
-    if (this.notificationsService) {
-      try {
-        this.notificationsService
-          .handleOrderStatusChange({ _id: response._id } as any, status)
-          .catch((error: unknown) => {
-            console.error(
-              'Failed to handle status change notification:',
-              error,
-            );
-          });
-      } catch (error) {
-        console.error('Failed to trigger status change notification:', error);
-      }
-    }
+    void this.notificationsService
+      .handleOrderStatusChange({
+        _id: response._id,
+        status,
+        orderNumber: response.orderNumber,
+        customerName: response.customerName,
+      })
+      .catch((error: unknown) => {
+        this.logger.error(
+          'Failed to handle status change notification',
+          error instanceof Error ? error.stack : String(error),
+        );
+      });
   }
 
   private toOrderResponse(order: OrderDocument): OrderResponseDto {

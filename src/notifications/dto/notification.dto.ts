@@ -1,16 +1,28 @@
-import { IsOptional, IsEnum, IsBoolean, IsString } from 'class-validator';
+import { Transform, Type } from 'class-transformer';
+import type { TransformFnParams } from 'class-transformer';
+import {
+  IsBoolean,
+  IsEnum,
+  IsInt,
+  IsOptional,
+  Max,
+  Min,
+} from 'class-validator';
 import {
   NOTIFICATION_CATEGORIES,
   NOTIFICATION_STATUSES,
+} from '../notifications.schema';
+import type {
   NotificationCategory,
   NotificationPriority,
   NotificationStatus,
+  NotificationType,
 } from '../notifications.schema';
 
 export class NotificationResponseDto {
   _id!: string;
 
-  type!: string;
+  type!: NotificationType;
 
   category!: NotificationCategory;
 
@@ -65,14 +77,32 @@ export class ListNotificationsQueryDto {
   category?: NotificationCategory;
 
   @IsOptional()
+  @Transform(({ value }: TransformFnParams): unknown => {
+    if (value === 'true') return true;
+    if (value === 'false') return false;
+    return value as unknown;
+  })
   @IsBoolean()
   isRead?: boolean;
 
   @IsOptional()
-  limit?: number;
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  limit?: number = 50;
 
   @IsOptional()
-  skip?: number;
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  skip?: number = 0;
+}
+
+export class ActiveNotificationsQueryDto {
+  @IsOptional()
+  @IsEnum(NOTIFICATION_CATEGORIES)
+  category?: NotificationCategory;
 }
 
 export class NotificationCountDto {
@@ -88,12 +118,6 @@ export class NotificationCountDto {
     normal: number;
     low: number;
   };
-}
-
-export class ResolveNotificationDto {
-  @IsOptional()
-  @IsString()
-  reason?: string;
 }
 
 export class MarkNotificationReadDto {

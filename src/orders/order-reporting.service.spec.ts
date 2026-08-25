@@ -75,7 +75,7 @@ describe('OrderReportingService', () => {
     const buffer = await builders.buildWorkbook(orders, summary, '2026-08');
     expect(buffer.subarray(0, 2).toString()).toBe('PK');
     const workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.load(buffer);
+    await workbook.xlsx.load(Uint8Array.from(buffer).buffer);
     const sheet = workbook.getWorksheet('Orders');
     expect(sheet?.getCell('D6').value).toBe('ลูกค้าทดสอบ');
     expect(sheet?.getCell('E6').value).toBe('0812345678');
