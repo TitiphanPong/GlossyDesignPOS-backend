@@ -80,7 +80,7 @@ export class NotificationsController {
   }
 
   /**
-   * Delete a notification (admin only)
+   * Dismiss a notification through the legacy DELETE compatibility route.
    * DELETE /notifications/:id
    */
   @Delete(':id')
