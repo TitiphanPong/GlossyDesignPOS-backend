@@ -23,7 +23,7 @@ Form fields:
 Files:
 - `files[]` (required, min 1, max 10)
 - Allowed: `pdf,jpg,jpeg,png,ai,psd,zip,doc,docx,xls,xlsx,csv`
-- Max per file: `8MB`
+- Max per file: `7,500,000 bytes` (about `7.15 MiB`)
 
 Success response:
 ```json
@@ -37,7 +37,7 @@ Success response:
 ## Run
 
 ```bash
-npm install
+npm ci
 cp .env.example .env.development
 npm run start:dev
 ```
@@ -72,7 +72,7 @@ curl -X POST http://localhost:8080/uploads \
 - CORS restricted by `FRONTEND_ORIGIN` only.
 - Global `ValidationPipe` with `whitelist + forbidNonWhitelisted`.
 - Upload endpoint rate-limited with `@nestjs/throttler`.
-- Multer memory storage with strict file count and `8MB` per file cap.
+- Multer memory storage with strict file count and a `7,500,000 byte` per-file cap.
 - Validation checks both file extension and MIME type.
 - Filename sanitized before S3 key generation.
 - S3 uploads are private (no `public-read`) with server-side encryption:
@@ -81,11 +81,13 @@ curl -X POST http://localhost:8080/uploads \
 - Stored S3 metadata is minimized (masked phone, jobType, customerName).
 - No AWS secret/credential is ever returned to clients.
 
-## Admin auth TODO
+## Authentication
 
-Admin auth is not implemented yet. Add it as a dedicated change with password
-hashing, a login endpoint, JWT or secure cookie sessions, role-ready admin user
-storage, and guards applied to admin-only product/order/upload APIs.
+Backend authentication is implemented and is the authorization boundary for protected APIs.
+The current contract includes `POST /auth/login`, `GET /auth/me`, and `POST /auth/logout`,
+with backend-managed `staff`, `manager`, and `admin` roles. The Next.js frontend stores the
+backend access token inside its signed HTTP-only admin session cookie and forwards it through
+the same-origin BFF. Frontend menu visibility is UX only and must not replace backend role checks.
 
 ## S3 retention policy (PDPA)
 
