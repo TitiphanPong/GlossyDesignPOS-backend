@@ -173,6 +173,7 @@ export class Order {
         amount: Number,
         method: { type: String, enum: PAYMENT_METHODS },
         note: String,
+        idempotencyKey: { type: String, maxlength: 128 },
         paidAt: { type: Date, default: Date.now },
       },
     ],
@@ -182,6 +183,7 @@ export class Order {
     amount: number;
     method: PaymentMethod;
     note?: string;
+    idempotencyKey?: string;
     paidAt: Date;
   }[];
 

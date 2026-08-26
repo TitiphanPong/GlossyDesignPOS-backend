@@ -12,10 +12,7 @@ import { MongoServerError } from 'mongodb';
 import { isValidObjectId, Model } from 'mongoose';
 import { RunningNumberService } from '../counters/running-number.service';
 import { OrderResponseDto } from './dto/order-response.dto';
-import {
-  TrackingOrderResponseDto,
-  TrackingSearchResponseDto,
-} from './dto/tracking-response.dto';
+import { PublicTrackingResponseDto } from './dto/tracking-response.dto';
 import { UpdateOrderCustomerDto } from './dto/update-order-customer.dto';
 import {
   ExportOrdersQueryDto,
@@ -160,15 +157,7 @@ export class OrdersService {
     status: OrderStatus,
     statusNote?: string,
   ): Promise<OrderResponseDto | null> {
-    if (
-      status === 'awaiting_payment' ||
-      status === 'partial' ||
-      status === 'paid'
-    ) {
-      throw new BadRequestException(
-        'Financial status is derived from authoritative payment facts.',
-      );
-    }
+    this.assertWorkflowStatusWritable(status);
     this.assertMongoObjectId(id, 'order id');
     const updated = await this.orderModel
       .findByIdAndUpdate(
@@ -205,6 +194,10 @@ export class OrdersService {
     const hasCustomerFields = Object.values(customerFields).some(
       (value) => value !== undefined,
     );
+
+    if (status !== undefined) {
+      this.assertWorkflowStatusWritable(status);
+    }
 
     if (status !== undefined && !hasCustomerFields) {
       const updated = await this.updateStatus(id, status, statusNote);
@@ -383,117 +376,208 @@ export class OrdersService {
     amount: number,
     method: PaymentMethod,
     note?: string,
+    idempotencyKey?: string,
   ): Promise<OrderResponseDto> {
     this.assertMongoObjectId(id, 'order id');
-    const order = await this.orderModel.findById(id);
-    if (!order) throw new NotFoundException('Order not found');
-
     if (amount <= 0) {
       throw new BadRequestException('Payment amount must be greater than 0.');
     }
-    if (amount > order.remainingTotal) {
-      throw new BadRequestException(
-        'Payment amount cannot exceed remaining total.',
-      );
-    }
 
     const paymentMinor = toMinorUnits(amount, 'payment amount');
-    const grandTotalMinor = toMinorUnits(order.grandTotal, 'grand total');
-    const paidMinor =
-      toMinorUnits(order.paidAmount ?? 0, 'paid amount') + paymentMinor;
-    order.depositTotal = fromMinorUnits(paidMinor);
-    order.paidAmount = fromMinorUnits(paidMinor);
-    order.remainingTotal = fromMinorUnits(grandTotalMinor - paidMinor);
-    order.payments.push({
-      amount: fromMinorUnits(paymentMinor),
-      method,
-      note,
-      paidAt: new Date(),
-    });
-    order.status = order.remainingTotal === 0 ? 'paid' : 'partial';
-    order.statusHistory.push({
-      status: order.status,
-      note,
-      changedAt: new Date(),
-    });
-
-    const updated = await order.save();
-    const response = this.toOrderResponse(updated);
-
-    if (order.status === 'paid') {
-      this.ordersSse.emitOrderAndAutoClear(response, 7000);
-    } else {
-      this.ordersSse.emitOrder(response);
+    if (paymentMinor <= 0) {
+      throw new BadRequestException('Payment amount must be greater than 0.');
     }
+    const paymentAmount = fromMinorUnits(paymentMinor);
+    const normalizedIdempotencyKey =
+      this.normalizePaymentIdempotencyKey(idempotencyKey);
+    const normalizedNote = note?.trim() || undefined;
+    const maxAttempts = 5;
 
-    try {
-      if (order.remainingTotal === 0) {
-        await this.notificationsService.autoResolvePaymentNotifications(id);
-      } else {
-        await this.notificationsService.handleOrderPaymentState(updated);
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      const order = await this.orderModel.findById(id).exec();
+      if (!order) throw new NotFoundException('Order not found');
+
+      if (normalizedIdempotencyKey) {
+        const existingPayment = order.payments.find(
+          (payment) => payment.idempotencyKey === normalizedIdempotencyKey,
+        );
+        if (existingPayment) {
+          const existingPaymentMinor = toMinorUnits(
+            existingPayment.amount,
+            'existing payment amount',
+          );
+          const existingNote = existingPayment.note?.trim() || undefined;
+          if (
+            existingPaymentMinor !== paymentMinor ||
+            existingPayment.method !== method ||
+            existingNote !== normalizedNote
+          ) {
+            throw new ConflictException(
+              'Idempotency key was already used for a different payment.',
+            );
+          }
+          return this.toOrderResponse(order);
+        }
       }
-    } catch (error) {
-      this.logger.error(
-        'Failed to handle payment notification',
-        error instanceof Error ? error.stack : String(error),
-      );
-    }
 
-    return response;
-  }
+      const grandTotalMinor = toMinorUnits(order.grandTotal, 'grand total');
+      const currentPaidMinor = this.sumPaymentFactsMinor(order);
+      if (currentPaidMinor > grandTotalMinor) {
+        throw new ConflictException(
+          'Stored payment facts exceed the order grand total. Reconciliation is required.',
+        );
+      }
 
-  async findTrackingByOrderNumber(
-    orderNumber: string,
-  ): Promise<TrackingOrderResponseDto | null> {
-    const order = await this.orderModel
-      .findOne({ $or: [{ orderNumber }, { orderId: orderNumber }] })
-      .exec();
-    return order ? this.toTrackingResponse(order) : null;
-  }
+      const remainingMinor = grandTotalMinor - currentPaidMinor;
+      const storedPaidMinor = toMinorUnits(
+        order.paidAmount ?? 0,
+        'paid amount',
+      );
+      const storedDepositMinor = toMinorUnits(
+        order.depositTotal ?? 0,
+        'deposit total',
+      );
+      const storedRemainingMinor = toMinorUnits(
+        order.remainingTotal,
+        'remaining total',
+      );
+      if (
+        storedPaidMinor !== currentPaidMinor ||
+        storedDepositMinor !== currentPaidMinor ||
+        storedRemainingMinor !== remainingMinor
+      ) {
+        throw new ConflictException(
+          'Stored payment totals do not reconcile with payment facts. Reconciliation is required.',
+        );
+      }
 
-  async searchTracking(query: {
-    orderNumber?: string;
-    phone?: string;
-    q?: string;
-  }): Promise<TrackingSearchResponseDto> {
-    const filter: Record<string, unknown> = {};
-    const or: Record<string, unknown>[] = [];
-    if (query.q?.trim()) {
-      const pattern = this.toSafePartialRegex(query.q);
-      or.push(
-        { orderNumber: { $regex: pattern, $options: 'i' } },
-        { orderId: { $regex: pattern, $options: 'i' } },
-        { phoneNumber: { $regex: pattern, $options: 'i' } },
-      );
-    }
-    if (query.orderNumber?.trim()) {
-      const pattern = this.toSafePartialRegex(query.orderNumber);
-      or.push(
-        { orderNumber: { $regex: pattern, $options: 'i' } },
-        { orderId: { $regex: pattern, $options: 'i' } },
-      );
-    }
-    if (query.phone?.trim()) {
-      filter.phoneNumber = {
-        $regex: this.toSafePartialRegex(query.phone),
-        $options: 'i',
+      if (paymentMinor > remainingMinor) {
+        throw new BadRequestException(
+          'Payment amount cannot exceed remaining total.',
+        );
+      }
+
+      const nextPaidMinor = currentPaidMinor + paymentMinor;
+      if (nextPaidMinor > grandTotalMinor) {
+        throw new BadRequestException(
+          'Payment amount cannot exceed remaining total.',
+        );
+      }
+
+      const expectedPaidAmount = fromMinorUnits(currentPaidMinor);
+      const expectedRemainingTotal = fromMinorUnits(remainingMinor);
+      const expectedGrandTotal = fromMinorUnits(grandTotalMinor);
+      const paidAmount = fromMinorUnits(nextPaidMinor);
+      const remainingTotal = fromMinorUnits(grandTotalMinor - nextPaidMinor);
+      const status: OrderStatus = remainingTotal === 0 ? 'paid' : 'partial';
+      const paidAt = new Date();
+      const paymentFilter: Record<string, unknown> = {
+        _id: id,
+        paidAmount: expectedPaidAmount,
+        grandTotal: expectedGrandTotal,
+        remainingTotal: {
+          $eq: expectedRemainingTotal,
+          $gte: paymentAmount,
+        },
       };
-    }
-    if (or.length) {
-      filter.$or = or;
+      if (normalizedIdempotencyKey) {
+        paymentFilter['payments.idempotencyKey'] = {
+          $ne: normalizedIdempotencyKey,
+        };
+      }
+
+      const updated = await this.orderModel
+        .findOneAndUpdate(
+          paymentFilter,
+          {
+            $set: {
+              depositTotal: paidAmount,
+              paidAmount,
+              remainingTotal,
+              status,
+            },
+            $push: {
+              payments: {
+                amount: paymentAmount,
+                method,
+                note,
+                ...(normalizedIdempotencyKey
+                  ? { idempotencyKey: normalizedIdempotencyKey }
+                  : {}),
+                paidAt,
+              },
+              statusHistory: {
+                status,
+                note,
+                changedAt: paidAt,
+              },
+            },
+          },
+          { new: true, runValidators: true },
+        )
+        .exec();
+
+      if (!updated) {
+        continue;
+      }
+
+      const response = this.toOrderResponse(updated);
+
+      if (status === 'paid') {
+        this.ordersSse.emitOrderAndAutoClear(response, 7000);
+      } else {
+        this.ordersSse.emitOrder(response);
+      }
+
+      try {
+        if (remainingTotal === 0) {
+          await this.notificationsService.autoResolvePaymentNotifications(id);
+        } else {
+          await this.notificationsService.handleOrderPaymentState(updated);
+        }
+      } catch (error) {
+        this.logger.error(
+          'Failed to handle payment notification',
+          error instanceof Error ? error.stack : String(error),
+        );
+      }
+
+      return response;
     }
 
-    if (!Object.keys(filter).length) {
-      throw new BadRequestException('q, orderNumber, or phone is required.');
-    }
+    throw new ConflictException(
+      'Payment state changed concurrently. Please retry the payment.',
+    );
+  }
 
-    const rows = await this.orderModel
-      .find(filter)
-      .sort({ createdAt: -1 })
-      .limit(10)
+  async lookupPublicTracking(
+    orderNumber: string,
+    phoneSuffix: string,
+  ): Promise<PublicTrackingResponseDto | null> {
+    const normalizedOrderNumber = orderNumber.trim();
+    const normalizedPhoneSuffix = phoneSuffix.trim();
+    const order = await this.orderModel
+      .findOne({
+        $and: [
+          {
+            $or: [
+              { orderNumber: normalizedOrderNumber },
+              { orderId: normalizedOrderNumber },
+            ],
+          },
+          { phoneNumber: { $regex: `${normalizedPhoneSuffix}$` } },
+        ],
+      })
       .exec();
-    const data = rows.map((order) => this.toTrackingResponse(order));
-    return { data, total: data.length };
+    if (!order) return null;
+
+    const plain = order.toObject() as OrderPlainObject;
+    return {
+      orderNumber: plain.orderNumber ?? plain.orderId ?? order._id.toString(),
+      status: plain.status,
+      createdAt: plain.createdAt,
+      updatedAt: plain.updatedAt,
+    };
   }
 
   async updateCustomerInfo(
@@ -513,6 +597,45 @@ export class OrdersService {
     }
 
     return this.toOrderResponse(updated);
+  }
+
+  private normalizePaymentIdempotencyKey(value?: string): string | undefined {
+    const normalized = value?.trim();
+    if (!normalized) return undefined;
+    if (normalized.length > 128) {
+      throw new BadRequestException(
+        'Payment idempotency key cannot exceed 128 characters.',
+      );
+    }
+    return normalized;
+  }
+
+  private sumPaymentFactsMinor(order: OrderDocument): number {
+    return (order.payments ?? []).reduce((sum, payment, index) => {
+      const paymentMinor = toMinorUnits(
+        payment.amount,
+        `payments.${index}.amount`,
+      );
+      const nextSum = sum + paymentMinor;
+      if (!Number.isSafeInteger(nextSum)) {
+        throw new ConflictException(
+          'Stored payment facts exceed the supported money range.',
+        );
+      }
+      return nextSum;
+    }, 0);
+  }
+
+  private assertWorkflowStatusWritable(status: OrderStatus): void {
+    if (
+      status === 'awaiting_payment' ||
+      status === 'partial' ||
+      status === 'paid'
+    ) {
+      throw new BadRequestException(
+        'Financial status is derived from authoritative payment facts.',
+      );
+    }
   }
 
   private assertMongoObjectId(value: string, label: string): void {
@@ -917,79 +1040,6 @@ export class OrdersService {
     };
   }
 
-  private toTrackingResponse(order: OrderDocument): TrackingOrderResponseDto {
-    const plain = order.toObject() as OrderPlainObject;
-    const id = order._id.toString();
-
-    return {
-      orderType: plain.orderType ?? 'NORMAL',
-      _id: id,
-      orderId: plain.orderId ?? id,
-      orderNumber: plain.orderNumber,
-      invoiceNumber: plain.invoiceNumber,
-      bookNo: plain.bookNo,
-      invoiceSequence: plain.invoiceSequence,
-      invoicePeriod: plain.invoicePeriod,
-      status: plain.status,
-      customerName: plain.customerName,
-      phoneNumber: plain.phoneNumber
-        ? this.maskPhone(plain.phoneNumber)
-        : undefined,
-      phone: plain.phoneNumber ? this.maskPhone(plain.phoneNumber) : undefined,
-      total: plain.total,
-      createdAt: plain.createdAt,
-      updatedAt: plain.updatedAt,
-      cart: (plain.cart ?? []).map((item) => ({
-        name: item.name,
-        category: item.category,
-        variantName: item.variantName,
-        variant: item.variant,
-        qty: item.qty,
-        quantity: item.qty,
-        price: item.unitPrice,
-        unitPrice: item.unitPrice,
-        totalPrice: item.totalPrice,
-        lineTotal: item.lineTotal ?? item.totalPrice,
-        sides: item.sides,
-        material: item.material,
-        colorMode: item.colorMode,
-        type: item.type,
-        typePremium: item.typePremium,
-        shape: item.shape,
-        size: item.size,
-        setCount: item.setCount,
-        inkjetType: item.inkjetType,
-        sizeFlex: item.sizeFlex,
-        stickerPVCType: item.stickerPVCType,
-        plotPlanType: item.plotPlanType,
-        deposit: item.deposit,
-        remaining: item.remaining,
-        fullPayment: item.fullPayment,
-        note: item.note ?? item.productNote,
-        productNote: item.productNote,
-      })),
-      items: (plain.cart ?? []).map((item) => ({
-        name: item.name,
-        category: item.category,
-        variantName: item.variantName,
-        qty: item.qty,
-      })),
-      grandTotal: plain.grandTotal ?? plain.total,
-      paidAmount: plain.paidAmount ?? plain.depositTotal ?? 0,
-      remainingTotal: plain.remainingTotal,
-      statusHistory: plain.statusHistory ?? [],
-      estimatedReadyAt: (plain as { estimatedReadyAt?: Date }).estimatedReadyAt,
-    };
-  }
-
-  private maskPhone(phone: string): string {
-    const digits = phone.trim();
-    if (digits.length <= 4) {
-      return '****';
-    }
-    return `${'*'.repeat(digits.length - 4)}${digits.slice(-4)}`;
-  }
-
   private emitForStatus(response: OrderResponseDto, status: OrderStatus): void {
     if (
       status === 'pending' ||
@@ -1081,7 +1131,12 @@ export class OrdersService {
       grandTotal: plain.grandTotal,
       receivedAmount: plain.receivedAmount,
       changeAmount: plain.changeAmount,
-      payments: plain.payments,
+      payments: (plain.payments ?? []).map((payment) => ({
+        amount: payment.amount,
+        method: payment.method,
+        note: payment.note,
+        paidAt: payment.paidAt,
+      })),
       statusHistory: plain.statusHistory ?? [],
       cart: plain.cart,
       createdAt: plain.createdAt,

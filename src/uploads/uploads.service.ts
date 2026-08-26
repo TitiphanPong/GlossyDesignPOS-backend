@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { FilterQuery, isValidObjectId, Model } from 'mongoose';
 import { randomInt, randomUUID } from 'node:crypto';
@@ -18,6 +18,8 @@ const UUID_PATTERN =
 
 @Injectable()
 export class UploadsService {
+  private readonly logger = new Logger(UploadsService.name);
+
   constructor(
     @InjectModel(Upload.name)
     private readonly uploadModel: Model<UploadDocument>,
@@ -36,43 +38,50 @@ export class UploadsService {
 
     const uploadedFiles: Upload['files'] = [];
 
-    for (const file of files) {
-      const sanitizedName = sanitizeFilename(file.originalname);
-      const s3Key = `uploads/${yyyy}/${mm}/${uploadId}/${sanitizedName}`;
+    try {
+      for (const file of files) {
+        const sanitizedName = sanitizeFilename(file.originalname);
+        const s3Key = `uploads/${yyyy}/${mm}/${uploadId}/${sanitizedName}`;
 
-      await this.s3Service.uploadPrivateObject({
-        key: s3Key,
-        body: file.buffer,
-        contentType: file.mimetype,
-        contentLength: file.size,
-        metadata: this.buildUploadMetadata(dto),
-      });
+        await this.s3Service.uploadPrivateObject({
+          key: s3Key,
+          body: file.buffer,
+          contentType: file.mimetype,
+          contentLength: file.size,
+          metadata: this.buildUploadMetadata(dto),
+        });
 
-      uploadedFiles.push({
-        originalName: file.originalname,
-        sanitizedName,
-        mimeType: file.mimetype,
-        size: file.size,
-        s3Key,
+        uploadedFiles.push({
+          originalName: file.originalname,
+          sanitizedName,
+          mimeType: file.mimetype,
+          size: file.size,
+          s3Key,
+        });
+      }
+
+      await this.uploadModel.create({
+        uploadId,
+        orderCode,
+        customerName: dto.customerName,
+        phone: dto.phone,
+        lineUserId: dto.lineUserId,
+        displayName: dto.displayName,
+        category: dto.category,
+        note: dto.note,
+        statusNote: dto.statusNote,
+        batchId: dto.batchId,
+        stage: dto.stage,
+        jobType: dto.jobType,
+        status: UploadStatus.PENDING,
+        files: uploadedFiles,
       });
+    } catch (error) {
+      await this.cleanupUploadedObjects(
+        uploadedFiles.map((file) => file.s3Key),
+      );
+      throw error;
     }
-
-    await this.uploadModel.create({
-      uploadId,
-      orderCode,
-      customerName: dto.customerName,
-      phone: dto.phone,
-      lineUserId: dto.lineUserId,
-      displayName: dto.displayName,
-      category: dto.category,
-      note: dto.note,
-      statusNote: dto.statusNote,
-      batchId: dto.batchId,
-      stage: dto.stage,
-      jobType: dto.jobType,
-      status: UploadStatus.PENDING,
-      files: uploadedFiles,
-    });
 
     const firstFile = uploadedFiles[0];
 
@@ -193,15 +202,37 @@ export class UploadsService {
 
   async deleteUploadById(id: string): Promise<boolean> {
     const selector = this.selectorForUploadId(id);
-    const row = await this.uploadModel.findOneAndDelete(selector);
+    const row = await this.uploadModel.findOne(selector).exec();
     if (!row) {
       return false;
     }
 
+    // S3 DeleteObject is idempotent. Keep the Mongo record until every known
+    // object deletion succeeds so a failed request can be retried safely.
     await Promise.all(
       row.files.map((file) => this.s3Service.deleteObject(file.s3Key)),
     );
-    return true;
+
+    const deleted = await this.uploadModel
+      .findOneAndDelete({ _id: row._id })
+      .exec();
+    return Boolean(deleted);
+  }
+
+  private async cleanupUploadedObjects(keys: string[]): Promise<void> {
+    const results = await Promise.allSettled(
+      keys.map((key) => this.s3Service.deleteObject(key)),
+    );
+    results.forEach((result, index) => {
+      if (result.status === 'rejected') {
+        this.logger.error(
+          `Failed to compensate uploaded S3 object ${keys[index]}`,
+          result.reason instanceof Error
+            ? result.reason.stack
+            : String(result.reason),
+        );
+      }
+    });
   }
 
   private selectorForUploadId(id: string): FilterQuery<UploadDocument> {

@@ -15,6 +15,7 @@ import {
 import { OrderPricingService } from './order-pricing.service';
 import { OrderReportingService } from './order-reporting.service';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { TrackingController } from './tracking.controller';
 
 @Module({
   imports: [
@@ -27,7 +28,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
       { name: QuickProduct.name, schema: QuickProductSchema },
     ]),
   ],
-  controllers: [OrdersController],
+  controllers: [OrdersController, TrackingController],
   providers: [
     OrdersService,
     RunningNumberService,

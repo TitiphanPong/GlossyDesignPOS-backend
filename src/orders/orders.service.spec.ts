@@ -273,12 +273,28 @@ describe('OrdersService', () => {
     );
   });
 
-  it('rejects attempts to write a financial status through workflow updates', async () => {
-    await expect(
-      service.updateStatus(validOrderId, 'paid'),
-    ).rejects.toBeInstanceOf(BadRequestException);
-    expect(findByIdAndUpdate).not.toHaveBeenCalled();
-  });
+  it.each(['awaiting_payment', 'partial', 'paid'] as const)(
+    'rejects direct workflow writes to financial status %s',
+    async (status) => {
+      await expect(
+        service.updateStatus(validOrderId, status),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(findByIdAndUpdate).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['awaiting_payment', 'partial', 'paid'] as const)(
+    'rejects generic PATCH bypass to financial status %s when customer fields are also present',
+    async (status) => {
+      await expect(
+        service.updateOrder(validOrderId, {
+          customerName: 'Attempted bypass',
+          status,
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(findByIdAndUpdate).not.toHaveBeenCalled();
+    },
+  );
 
   it('rejects a discount greater than the server-priced subtotal', async () => {
     await expect(
