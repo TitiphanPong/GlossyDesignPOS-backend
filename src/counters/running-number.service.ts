@@ -1,6 +1,6 @@
 import { Injectable, InternalServerErrorException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { ClientSession, Model } from 'mongoose';
 import {
   Counter,
   CounterDocument,
@@ -49,6 +49,7 @@ export class RunningNumberService {
 
   async generateTaxInvoiceNumber(
     issuedAt: Date = new Date(),
+    session?: ClientSession,
   ): Promise<TaxInvoiceNumber> {
     const invoicePeriod = this.getInvoicePeriod(issuedAt);
     const counterPeriod = Number(invoicePeriod);
@@ -61,7 +62,7 @@ export class RunningNumberService {
           year: counterPeriod,
         },
       },
-      { new: true, upsert: true },
+      { new: true, upsert: true, ...(session ? { session } : {}) },
     );
     if (!counter) {
       throw new InternalServerErrorException(

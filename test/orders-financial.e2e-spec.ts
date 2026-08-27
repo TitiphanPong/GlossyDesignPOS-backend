@@ -1,5 +1,5 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
-import { getModelToken } from '@nestjs/mongoose';
+import { getConnectionToken, getModelToken } from '@nestjs/mongoose';
 import { Test, TestingModule } from '@nestjs/testing';
 import request from 'supertest';
 import { AuditService } from '../src/auth/audit.service';
@@ -68,6 +68,7 @@ describe('authoritative order financial pipeline (integration)', () => {
       providers: [
         OrdersService,
         OrderPricingService,
+        { provide: getConnectionToken(), useValue: {} },
         { provide: getModelToken(Order.name), useValue: FakeOrderModel },
         { provide: getModelToken(Product.name), useValue: catalogModel },
         { provide: getModelToken(QuickProduct.name), useValue: catalogModel },

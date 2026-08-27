@@ -1,5 +1,5 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { Model } from 'mongoose';
+import { Connection, Model } from 'mongoose';
 import { RunningNumberService } from '../counters/running-number.service';
 import type { OrderDocument, OrderStatus } from './orders.schema';
 import { OrdersSseService } from './orders.sse.service';
@@ -74,6 +74,7 @@ describe('OrdersService', () => {
       orderPricing,
       undefined as unknown as OrderReportingService,
       notificationsService,
+      {} as Connection,
     );
   });
 

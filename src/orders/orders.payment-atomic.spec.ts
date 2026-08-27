@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException } from '@nestjs/common';
-import { Model } from 'mongoose';
+import { Connection, Model } from 'mongoose';
 import { RunningNumberService } from '../counters/running-number.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { OrderPricingService } from './order-pricing.service';
@@ -224,6 +224,7 @@ function makeService(orderModel: Model<OrderDocument>) {
     orderPricing,
     undefined as unknown as OrderReportingService,
     notificationsService,
+    {} as Connection,
   );
 }
 

@@ -15,7 +15,10 @@ jest.setTimeout(120_000);
 const describeMongo =
   process.env.RUN_MONGO_INTEGRATION === '1' ? describe : describe.skip;
 
-function makeService(orderModel: Model<OrderDocument>): OrdersService {
+function makeService(
+  orderModel: Model<OrderDocument>,
+  connection: Connection,
+): OrdersService {
   const ordersSse = {
     emitOrder: jest.fn(),
     emitOrderAndAutoClear: jest.fn(),
@@ -32,6 +35,7 @@ function makeService(orderModel: Model<OrderDocument>): OrdersService {
     {} as OrderPricingService,
     undefined as unknown as OrderReportingService,
     notificationsService,
+    connection,
   );
 }
 
@@ -51,7 +55,7 @@ describeMongo('OrdersService addPayment against isolated MongoDB', () => {
       Order.name,
       OrderSchema,
     ) as unknown as Model<OrderDocument>;
-    service = makeService(orderModel);
+    service = makeService(orderModel, connection);
   });
 
   afterAll(async () => {
