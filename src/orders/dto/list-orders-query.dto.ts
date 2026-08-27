@@ -37,6 +37,10 @@ export class ListOrdersQueryDto {
   status?: OrderStatus;
 
   @IsOptional()
+  @IsIn(['unpaid'])
+  payment?: 'unpaid';
+
+  @IsOptional()
   @IsIn(PAYMENT_METHODS)
   paymentMethod?: PaymentMethod;
 
