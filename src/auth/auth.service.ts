@@ -17,7 +17,11 @@ import {
 } from 'node:crypto';
 import { promisify } from 'node:util';
 import { isValidObjectId, Model } from 'mongoose';
-import { AUTH_SESSION_TTL_MS } from './auth.constants';
+import {
+  resolveAuthSessionTtlMs,
+  USER_ROLES,
+  type UserRole,
+} from './auth.constants';
 import { AuthenticatedUser } from './auth.types';
 import {
   AuthSession,
@@ -43,29 +47,29 @@ export class AuthService implements OnModuleInit {
   ) {}
 
   async onModuleInit(): Promise<void> {
-    const username = this.config
-      .get<string>('ADMIN_LOGIN_USERNAME')
+    await this.bootstrapConfiguredUser({
+      username: this.config.get<string>('ADMIN_LOGIN_USERNAME'),
+      password: this.config.get<string>('ADMIN_LOGIN_PASSWORD'),
+      role: 'admin',
+      label: 'admin',
+    });
+
+    const configuredAgentRole = this.config
+      .get<string>('AGENT_LOGIN_ROLE')
       ?.trim()
       .toLowerCase();
-    const password = this.config.get<string>('ADMIN_LOGIN_PASSWORD');
-    if (!username || !password) return;
+    const agentRole: UserRole = USER_ROLES.includes(
+      configuredAgentRole as UserRole,
+    )
+      ? (configuredAgentRole as UserRole)
+      : 'staff';
 
-    const exists = await this.userModel.exists({ username });
-    if (!exists) {
-      await this.userModel.create({
-        username,
-        passwordHash: await this.hashPassword(password),
-        role: 'admin',
-        active: true,
-      });
-      this.logger.warn(
-        `Bootstrapped admin user "${username}" from environment configuration`,
-      );
-      await this.auditService.record(null, 'auth.user.bootstrap', {
-        type: 'user',
-        id: username,
-      });
-    }
+    await this.bootstrapConfiguredUser({
+      username: this.config.get<string>('AGENT_LOGIN_USERNAME'),
+      password: this.config.get<string>('AGENT_LOGIN_PASSWORD'),
+      role: agentRole,
+      label: 'agent',
+    });
   }
 
   async login(
@@ -89,7 +93,13 @@ export class AuthService implements OnModuleInit {
     }
 
     const accessToken = randomBytes(32).toString('base64url');
-    const expiresAt = new Date(Date.now() + AUTH_SESSION_TTL_MS);
+    const expiresAt = new Date(
+      Date.now() +
+        resolveAuthSessionTtlMs(
+          user.username,
+          this.config.get<string>('AGENT_LOGIN_USERNAME'),
+        ),
+    );
     await Promise.all([
       this.sessionModel.create({
         userId: user._id,
@@ -256,6 +266,40 @@ export class AuthService implements OnModuleInit {
 
   async listAuditEvents(limit?: number) {
     return this.auditService.list(limit);
+  }
+
+  private async bootstrapConfiguredUser({
+    username,
+    password,
+    role,
+    label,
+  }: {
+    username?: string;
+    password?: string;
+    role: UserRole;
+    label: 'admin' | 'agent';
+  }): Promise<void> {
+    const normalizedUsername = username?.trim().toLowerCase();
+    if (!normalizedUsername || !password) return;
+
+    const exists = await this.userModel.exists({
+      username: normalizedUsername,
+    });
+    if (exists) return;
+
+    await this.userModel.create({
+      username: normalizedUsername,
+      passwordHash: await this.hashPassword(password),
+      role,
+      active: true,
+    });
+    this.logger.warn(
+      `Bootstrapped ${label} user "${normalizedUsername}" from environment configuration`,
+    );
+    await this.auditService.record(null, 'auth.user.bootstrap', {
+      type: 'user',
+      id: normalizedUsername,
+    });
   }
 
   private async hashPassword(password: string): Promise<string> {
