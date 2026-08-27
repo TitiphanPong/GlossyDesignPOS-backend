@@ -9,17 +9,19 @@ services:
         value: production
       - key: PORT
         value: 8080
+      - key: FRONTEND_ORIGIN
+        sync: false
       - key: MONGODB_URI
         sync: false
-      - key: GOOGLE_CLIENT_ID
+      - key: AWS_REGION
         sync: false
-      - key: GOOGLE_CLIENT_SECRET
+      - key: AWS_ACCESS_KEY_ID
         sync: false
-      - key: GOOGLE_REDIRECT_URI
+      - key: AWS_SECRET_ACCESS_KEY
         sync: false
-      - key: GOOGLE_REFRESH_TOKEN
+      - key: AWS_S3_BUCKET_PRIVATE
         sync: false
-      - key: GOOGLE_FOLDER_ID
+      - key: AWS_S3_KMS_KEY_ID
         sync: false
-      - key: PROMPTPAY_ID
-        sync: false
+      - key: ORDER_NUMBER_TIMEZONE
+        value: Asia/Bangkok

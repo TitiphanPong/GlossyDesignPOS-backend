@@ -284,7 +284,7 @@ export class NotificationsService {
         },
         {
           $set: {
-            status: 'resolved' as NotificationStatus,
+            status: 'resolved',
             resolvedAt: new Date(),
           },
         },
@@ -309,7 +309,7 @@ export class NotificationsService {
         },
         {
           $set: {
-            status: 'resolved' as NotificationStatus,
+            status: 'resolved',
             resolvedAt: new Date(),
           },
         },

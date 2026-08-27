@@ -195,12 +195,14 @@ export class OrdersController {
     @Param('id') id: string,
     @Body() body: AddPaymentDto,
     @Request() request: AuthRequest,
+    @Headers('idempotency-key') idempotencyKey?: string,
   ) {
     const updated = await this.ordersService.addPayment(
       id,
       body.amount,
       body.method,
       body.note,
+      idempotencyKey,
     );
     await this.auditService.record(
       request.user ?? null,
