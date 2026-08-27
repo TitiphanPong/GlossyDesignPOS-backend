@@ -78,7 +78,7 @@ describe('UploadsController (e2e)', () => {
       .field('statusNote', 'Ready for pickup after download')
       .field('batchId', '4d6b9e89-52f6-4614-aa35-fc764f29f8cb')
       .field('stage', UploadStage.WAITING_DOWNLOAD)
-      .attach('files', Buffer.from('fake pdf content'), 'sample.pdf')
+      .attach('files', Buffer.from('%PDF-1.7\nfake pdf content'), 'sample.pdf')
       .expect(201)
       .expect({
         id: 'mock-upload-id',

@@ -14,7 +14,6 @@ import {
   Request,
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
-import { memoryStorage } from 'multer';
 import { Throttle } from '@nestjs/throttler';
 import { UploadsService } from './uploads.service';
 import { CreateUploadDto } from './dto/create-upload.dto';
@@ -23,8 +22,10 @@ import { ListUploadsQueryDto } from './dto/list-uploads-query.dto';
 import { UpdateUploadDto } from './dto/update-upload.dto';
 import {
   MAX_FILE_SIZE_BYTES,
+  MAX_UPLOAD_REQUEST_BYTES,
   validateUploadedFiles,
 } from './validators/upload-file.validator';
+import { BoundedMemoryStorage } from './validators/bounded-memory.storage';
 import { Public, Roles } from '../auth/auth.decorators';
 import { AuditService } from '../auth/audit.service';
 import { AuthenticatedUser } from '../auth/auth.types';
@@ -48,7 +49,7 @@ export class UploadsController {
   @Throttle({ default: { ttl: 60_000, limit: 20 } })
   @UseInterceptors(
     FilesInterceptor('files', 10, {
-      storage: memoryStorage(), // NOSONAR: file count, size, and request rate are capped.
+      storage: new BoundedMemoryStorage(MAX_UPLOAD_REQUEST_BYTES),
       limits: {
         files: 10,
         fileSize: MAX_FILE_SIZE_BYTES,
