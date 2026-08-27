@@ -159,4 +159,9 @@ describe('UploadsController (e2e)', () => {
         expect(body.message).toContain('At least one file is required');
       });
   });
+
+  it('does not expose the retired singular /upload API alias', async () => {
+    await request(server).post('/upload').expect(404);
+    expect(createUpload).not.toHaveBeenCalled();
+  });
 });
