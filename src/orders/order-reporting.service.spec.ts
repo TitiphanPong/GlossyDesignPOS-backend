@@ -71,6 +71,13 @@ describe('OrderReportingService', () => {
     expect(serialized).toContain('createdAt');
   });
 
+  it('filters unpaid drill-downs by outstanding balance and excludes cancelled orders', () => {
+    const filter = service.buildOrderFilter({ payment: 'unpaid' });
+
+    expect(filter.remainingTotal).toEqual({ $gt: 0 });
+    expect(filter.$and).toContainEqual({ status: { $ne: 'cancelled' } });
+  });
+
   it('creates a real XLSX with Thai text, leading-zero phone and formula-safe strings', async () => {
     const buffer = await builders.buildWorkbook(orders, summary, '2026-08');
     expect(buffer.subarray(0, 2).toString()).toBe('PK');

@@ -244,6 +244,10 @@ export class OrderReportingService {
       ];
     }
     if (query.status) filter.status = query.status;
+    if (query.payment === 'unpaid') {
+      filter.remainingTotal = { $gt: 0 };
+      filter.$and = [...(filter.$and ?? []), { status: { $ne: 'cancelled' } }];
+    }
     if (query.paymentMethod) filter.payment = query.paymentMethod;
     if (query.orderType) filter.orderType = query.orderType;
     if (query.taxInvoice) filter.taxInvoice = query.taxInvoice;
