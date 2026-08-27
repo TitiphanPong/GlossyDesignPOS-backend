@@ -24,16 +24,57 @@ function file(
   };
 }
 
-function zipLocalEntries(...entryNames: string[]): Buffer {
-  const chunks = entryNames.map((entryName) => {
-    const name = Buffer.from(entryName, 'utf8');
-    const header = Buffer.alloc(30);
-    header.writeUInt32LE(0x04034b50, 0);
-    header.writeUInt16LE(20, 4);
-    header.writeUInt16LE(name.length, 26);
-    return Buffer.concat([header, name]);
-  });
-  return Buffer.concat(chunks);
+function zipPackageEntries(
+  entries: Array<{ name: string; payload?: Buffer }>,
+): Buffer {
+  const localChunks: Buffer[] = [];
+  const centralChunks: Buffer[] = [];
+  let localOffset = 0;
+
+  for (const entry of entries) {
+    const name = Buffer.from(entry.name, 'utf8');
+    const payload = entry.payload ?? Buffer.alloc(0);
+    const localHeader = Buffer.alloc(30);
+    localHeader.writeUInt32LE(0x04034b50, 0);
+    localHeader.writeUInt16LE(20, 4);
+    localHeader.writeUInt32LE(payload.length, 18);
+    localHeader.writeUInt32LE(payload.length, 22);
+    localHeader.writeUInt16LE(name.length, 26);
+    const localChunk = Buffer.concat([localHeader, name, payload]);
+    localChunks.push(localChunk);
+
+    const centralHeader = Buffer.alloc(46);
+    centralHeader.writeUInt32LE(0x02014b50, 0);
+    centralHeader.writeUInt16LE(20, 6);
+    centralHeader.writeUInt32LE(payload.length, 20);
+    centralHeader.writeUInt32LE(payload.length, 24);
+    centralHeader.writeUInt16LE(name.length, 28);
+    centralHeader.writeUInt32LE(localOffset, 42);
+    centralChunks.push(Buffer.concat([centralHeader, name]));
+    localOffset += localChunk.length;
+  }
+
+  const centralDirectory = Buffer.concat(centralChunks);
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0);
+  eocd.writeUInt16LE(entries.length, 8);
+  eocd.writeUInt16LE(entries.length, 10);
+  eocd.writeUInt32LE(centralDirectory.length, 12);
+  eocd.writeUInt32LE(localOffset, 16);
+  return Buffer.concat([...localChunks, centralDirectory, eocd]);
+}
+
+function zipPackage(...entryNames: string[]): Buffer {
+  return zipPackageEntries(entryNames.map((name) => ({ name })));
+}
+
+function fakeLocalHeader(entryName: string): Buffer {
+  const name = Buffer.from(entryName, 'utf8');
+  const header = Buffer.alloc(30);
+  header.writeUInt32LE(0x04034b50, 0);
+  header.writeUInt16LE(20, 4);
+  header.writeUInt16LE(name.length, 26);
+  return Buffer.concat([header, name]);
 }
 
 describe('validateUploadedFiles', () => {
@@ -58,7 +99,7 @@ describe('validateUploadedFiles', () => {
         file(
           'sheet.xlsx',
           'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-          zipLocalEntries('[Content_Types].xml', 'xl/workbook.xml'),
+          zipPackage('[Content_Types].xml', 'xl/workbook.xml'),
         ),
       ]),
     ).not.toThrow();
@@ -94,7 +135,24 @@ describe('validateUploadedFiles', () => {
         file(
           'fake.docx',
           'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-          zipLocalEntries('random.txt'),
+          zipPackage('random.txt'),
+        ),
+      ]),
+    ).toThrow('File content does not match its declared type');
+  });
+
+  it('rejects fake OOXML local headers embedded only in ZIP payload data', () => {
+    const payload = Buffer.concat([
+      fakeLocalHeader('[Content_Types].xml'),
+      fakeLocalHeader('word/document.xml'),
+    ]);
+
+    expect(() =>
+      validateUploadedFiles([
+        file(
+          'fake.docx',
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          zipPackageEntries([{ name: 'random.bin', payload }]),
         ),
       ]),
     ).toThrow('File content does not match its declared type');
@@ -106,7 +164,7 @@ describe('validateUploadedFiles', () => {
         file(
           'fake.xlsx',
           'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-          zipLocalEntries('[Content_Types].xml', 'word/document.xml'),
+          zipPackage('[Content_Types].xml', 'word/document.xml'),
         ),
       ]),
     ).toThrow('File content does not match its declared type');
@@ -118,7 +176,7 @@ describe('validateUploadedFiles', () => {
         file(
           'document.docx',
           'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-          zipLocalEntries('[Content_Types].xml', 'word/document.xml'),
+          zipPackage('[Content_Types].xml', 'word/document.xml'),
         ),
       ]),
     ).not.toThrow();

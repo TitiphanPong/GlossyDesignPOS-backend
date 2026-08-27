@@ -31,7 +31,8 @@ const ZIP_SIGNATURES = [
   Buffer.from([0x50, 0x4b, 0x05, 0x06]),
   Buffer.from([0x50, 0x4b, 0x07, 0x08]),
 ];
-const ZIP_LOCAL_HEADER = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
+const ZIP_CENTRAL_DIRECTORY_HEADER = Buffer.from([0x50, 0x4b, 0x01, 0x02]);
+const ZIP_END_OF_CENTRAL_DIRECTORY = Buffer.from([0x50, 0x4b, 0x05, 0x06]);
 const OLE_SIGNATURE = Buffer.from([
   0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1,
 ]);
@@ -47,36 +48,62 @@ function isZip(buffer: Buffer): boolean {
   return ZIP_SIGNATURES.some((signature) => startsWith(buffer, signature));
 }
 
-function zipLocalEntryNames(buffer: Buffer): string[] {
-  const names: string[] = [];
-  let offset = 0;
+function zipCentralDirectoryEntryNames(buffer: Buffer): string[] | null {
+  // The classic EOCD record must be within the final 65,557 bytes
+  // (22-byte record + max 65,535-byte comment). OOXML uploads are far below ZIP64 limits.
+  const searchStart = Math.max(0, buffer.length - 65_557);
+  const eocdOffset = buffer.lastIndexOf(ZIP_END_OF_CENTRAL_DIRECTORY);
+  if (eocdOffset < searchStart || eocdOffset + 22 > buffer.length) return null;
 
-  while (offset <= buffer.length - 30) {
-    const headerOffset = buffer.indexOf(ZIP_LOCAL_HEADER, offset);
-    if (headerOffset < 0 || headerOffset + 30 > buffer.length) break;
+  const diskNumber = buffer.readUInt16LE(eocdOffset + 4);
+  const centralDirectoryDisk = buffer.readUInt16LE(eocdOffset + 6);
+  const entriesOnDisk = buffer.readUInt16LE(eocdOffset + 8);
+  const totalEntries = buffer.readUInt16LE(eocdOffset + 10);
+  const centralDirectorySize = buffer.readUInt32LE(eocdOffset + 12);
+  const centralDirectoryOffset = buffer.readUInt32LE(eocdOffset + 16);
+  const commentLength = buffer.readUInt16LE(eocdOffset + 20);
 
-    const fileNameLength = buffer.readUInt16LE(headerOffset + 26);
-    const extraLength = buffer.readUInt16LE(headerOffset + 28);
-    const nameStart = headerOffset + 30;
-    const nameEnd = nameStart + fileNameLength;
-    if (nameEnd > buffer.length) break;
-
-    names.push(buffer.toString('utf8', nameStart, nameEnd));
-    offset = Math.max(
-      nameEnd + extraLength,
-      headerOffset + ZIP_LOCAL_HEADER.length,
-    );
+  if (
+    diskNumber !== 0 ||
+    centralDirectoryDisk !== 0 ||
+    entriesOnDisk !== totalEntries ||
+    eocdOffset + 22 + commentLength !== buffer.length ||
+    centralDirectoryOffset + centralDirectorySize !== eocdOffset
+  ) {
+    return null;
   }
 
-  return names;
+  const names: string[] = [];
+  let offset = centralDirectoryOffset;
+  for (let index = 0; index < totalEntries; index += 1) {
+    if (
+      offset + 46 > eocdOffset ||
+      !buffer.subarray(offset, offset + 4).equals(ZIP_CENTRAL_DIRECTORY_HEADER)
+    ) {
+      return null;
+    }
+
+    const fileNameLength = buffer.readUInt16LE(offset + 28);
+    const extraLength = buffer.readUInt16LE(offset + 30);
+    const commentLengthForEntry = buffer.readUInt16LE(offset + 32);
+    const nameStart = offset + 46;
+    const nameEnd = nameStart + fileNameLength;
+    const nextOffset = nameEnd + extraLength + commentLengthForEntry;
+    if (nameEnd > eocdOffset || nextOffset > eocdOffset) return null;
+
+    names.push(buffer.toString('utf8', nameStart, nameEnd));
+    offset = nextOffset;
+  }
+
+  return offset === eocdOffset ? names : null;
 }
 
 function isOoxmlPackage(buffer: Buffer, contentRoot: 'word/' | 'xl/'): boolean {
   if (!isZip(buffer)) return false;
-  const entryNames = zipLocalEntryNames(buffer);
-  return (
-    entryNames.includes('[Content_Types].xml') &&
-    entryNames.some((name) => name.startsWith(contentRoot))
+  const entryNames = zipCentralDirectoryEntryNames(buffer);
+  return Boolean(
+    entryNames?.includes('[Content_Types].xml') &&
+      entryNames.some((name) => name.startsWith(contentRoot)),
   );
 }
 
