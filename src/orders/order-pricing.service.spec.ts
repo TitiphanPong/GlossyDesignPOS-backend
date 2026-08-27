@@ -45,10 +45,12 @@ describe('OrderPricingService', () => {
     );
   });
 
-  it('resolves catalog identity and snapshots the server-owned variant price', async () => {
-    const [line] = await service.resolveCart('QUICK_SALE', [
-      { productCode: 'A4', quantity: 3 },
-    ]);
+  it('allows staff to use the authoritative catalog price without an override', async () => {
+    const [line] = await service.resolveCart(
+      'QUICK_SALE',
+      [{ productCode: 'A4', quantity: 3 }],
+      'staff',
+    );
 
     expect(quickProductModel.findOne).toHaveBeenCalledWith({
       active: true,
