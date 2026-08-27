@@ -124,12 +124,15 @@ function zipCentralDirectoryEntryNames(buffer: Buffer): string[] | null {
   return offset === eocdOffset ? names : null;
 }
 
-function isOoxmlPackage(buffer: Buffer, contentRoot: 'word/' | 'xl/'): boolean {
+function isOoxmlPackage(
+  buffer: Buffer,
+  requiredCorePart: 'word/document.xml' | 'xl/workbook.xml',
+): boolean {
   if (!isZip(buffer)) return false;
   const entryNames = zipCentralDirectoryEntryNames(buffer);
   return Boolean(
     entryNames?.includes('[Content_Types].xml') &&
-      entryNames.some((name) => name.startsWith(contentRoot)),
+      entryNames.includes(requiredCorePart),
   );
 }
 
@@ -168,9 +171,9 @@ function hasExpectedSignature(extension: string, buffer: Buffer): boolean {
     case '.zip':
       return isZip(buffer);
     case '.docx':
-      return isOoxmlPackage(buffer, 'word/');
+      return isOoxmlPackage(buffer, 'word/document.xml');
     case '.xlsx':
-      return isOoxmlPackage(buffer, 'xl/');
+      return isOoxmlPackage(buffer, 'xl/workbook.xml');
     case '.doc':
     case '.xls':
       return startsWith(buffer, OLE_SIGNATURE);

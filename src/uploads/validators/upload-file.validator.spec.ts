@@ -190,6 +190,28 @@ describe('validateUploadedFiles', () => {
     ).toThrow('File content does not match its declared type');
   });
 
+  it('rejects OOXML-looking folders that omit the required core document part', () => {
+    expect(() =>
+      validateUploadedFiles([
+        file(
+          'fake.docx',
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          zipPackage('[Content_Types].xml', 'word/random.txt'),
+        ),
+      ]),
+    ).toThrow('File content does not match its declared type');
+
+    expect(() =>
+      validateUploadedFiles([
+        file(
+          'fake.xlsx',
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          zipPackage('[Content_Types].xml', 'xl/random.txt'),
+        ),
+      ]),
+    ).toThrow('File content does not match its declared type');
+  });
+
   it('accepts a DOCX package with required OOXML entries', () => {
     expect(() =>
       validateUploadedFiles([
