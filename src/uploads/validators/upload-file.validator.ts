@@ -75,6 +75,7 @@ function zipCentralDirectoryEntryNames(buffer: Buffer): string[] | null {
   }
 
   const names: string[] = [];
+  const localRegions: Array<{ start: number; end: number }> = [];
   let offset = centralDirectoryOffset;
   for (let index = 0; index < totalEntries; index += 1) {
     if (
@@ -118,10 +119,21 @@ function zipCentralDirectoryEntryNames(buffer: Buffer): string[] | null {
     }
 
     names.push(entryName);
+    localRegions.push({ start: localHeaderOffset, end: localDataEnd });
     offset = nextOffset;
   }
 
-  return offset === eocdOffset ? names : null;
+  if (offset !== eocdOffset) return null;
+  localRegions.sort((a, b) => a.start - b.start);
+  for (let index = 1; index < localRegions.length; index += 1) {
+    const current = localRegions[index];
+    const previous = localRegions[index - 1];
+    if (current.start < previous.end) {
+      return null;
+    }
+  }
+
+  return names;
 }
 
 function isOoxmlPackage(

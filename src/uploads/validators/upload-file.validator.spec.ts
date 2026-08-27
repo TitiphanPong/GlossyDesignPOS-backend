@@ -77,6 +77,54 @@ function fakeLocalHeader(entryName: string): Buffer {
   return Buffer.concat([header, name]);
 }
 
+function zipWithForgedEntriesInsidePayload(): Buffer {
+  const outerName = Buffer.from('random.bin', 'utf8');
+  const nestedContentTypes = fakeLocalHeader('[Content_Types].xml');
+  const nestedDocument = fakeLocalHeader('word/document.xml');
+  const payload = Buffer.concat([nestedContentTypes, nestedDocument]);
+  const outerHeader = Buffer.alloc(30);
+  outerHeader.writeUInt32LE(0x04034b50, 0);
+  outerHeader.writeUInt16LE(20, 4);
+  outerHeader.writeUInt32LE(payload.length, 18);
+  outerHeader.writeUInt32LE(payload.length, 22);
+  outerHeader.writeUInt16LE(outerName.length, 26);
+  const localArea = Buffer.concat([outerHeader, outerName, payload]);
+  const payloadOffset = outerHeader.length + outerName.length;
+
+  const centralEntry = (
+    entryName: string,
+    localHeaderOffset: number,
+    compressedSize: number,
+  ) => {
+    const name = Buffer.from(entryName, 'utf8');
+    const header = Buffer.alloc(46);
+    header.writeUInt32LE(0x02014b50, 0);
+    header.writeUInt16LE(20, 6);
+    header.writeUInt32LE(compressedSize, 20);
+    header.writeUInt32LE(compressedSize, 24);
+    header.writeUInt16LE(name.length, 28);
+    header.writeUInt32LE(localHeaderOffset, 42);
+    return Buffer.concat([header, name]);
+  };
+
+  const centralDirectory = Buffer.concat([
+    centralEntry('random.bin', 0, payload.length),
+    centralEntry('[Content_Types].xml', payloadOffset, 0),
+    centralEntry(
+      'word/document.xml',
+      payloadOffset + nestedContentTypes.length,
+      0,
+    ),
+  ]);
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0);
+  eocd.writeUInt16LE(3, 8);
+  eocd.writeUInt16LE(3, 10);
+  eocd.writeUInt32LE(centralDirectory.length, 12);
+  eocd.writeUInt32LE(localArea.length, 16);
+  return Buffer.concat([localArea, centralDirectory, eocd]);
+}
+
 describe('validateUploadedFiles', () => {
   it('accepts supported files only when extension, MIME, and signature agree', () => {
     expect(() =>
@@ -153,6 +201,18 @@ describe('validateUploadedFiles', () => {
           'fake.docx',
           'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
           zipPackageEntries([{ name: 'random.bin', payload }]),
+        ),
+      ]),
+    ).toThrow('File content does not match its declared type');
+  });
+
+  it('rejects central-directory entries that point into another entry payload', () => {
+    expect(() =>
+      validateUploadedFiles([
+        file(
+          'fake.docx',
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          zipWithForgedEntriesInsidePayload(),
         ),
       ]),
     ).toThrow('File content does not match its declared type');
