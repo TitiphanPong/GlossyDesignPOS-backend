@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Notification } from './notifications.schema';
@@ -13,6 +17,7 @@ import {
   NotificationResponseDto,
   ListNotificationsQueryDto,
   NotificationCountDto,
+  ActionCenterDto,
 } from './dto/notification.dto';
 import { Order } from '../orders/orders.schema';
 import type { OrderDocument, OrderStatus } from '../orders/orders.schema';
@@ -46,6 +51,16 @@ type OrderStatusNotification = {
   orderNumber?: string;
   customerName: string;
 };
+
+const ACTION_CENTER_TYPES: readonly NotificationType[] = [
+  'payment_outstanding',
+  'payment_failed',
+  'order_overdue',
+  'order_ready_for_pickup',
+  'order_pickup_delayed',
+  'upload_review_required',
+  'upload_failed',
+];
 
 @Injectable()
 export class NotificationsService {
@@ -113,6 +128,11 @@ export class NotificationsService {
     if (!notification) {
       throw new NotFoundException(`Notification not found: ${notificationId}`);
     }
+    if (notification.category === 'action_required') {
+      throw new BadRequestException(
+        'Action-required items resolve from the underlying business state.',
+      );
+    }
 
     notification.status = 'resolved';
     notification.resolvedAt = new Date();
@@ -130,6 +150,11 @@ export class NotificationsService {
     const notification = await this.notificationModel.findById(notificationId);
     if (!notification) {
       throw new NotFoundException(`Notification not found: ${notificationId}`);
+    }
+    if (notification.category === 'action_required') {
+      throw new BadRequestException(
+        'Action-required items cannot be dismissed while the condition is active.',
+      );
     }
 
     notification.status = 'dismissed';
@@ -204,7 +229,47 @@ export class NotificationsService {
   }
 
   /**
-   * Get active notifications only (those needing action)
+   * Return the operational action queue and summary from one consistent snapshot.
+   * Legacy order-created noise is intentionally excluded from this view.
+   */
+  async getActionCenter(): Promise<ActionCenterDto> {
+    const notifications = await this.notificationModel
+      .find({ status: 'active', type: { $in: ACTION_CENTER_TYPES } })
+      .sort({ createdAt: -1 })
+      .exec();
+
+    const priorityOrder: Record<NotificationPriority, number> = {
+      critical: 0,
+      high: 1,
+      normal: 2,
+      low: 3,
+    };
+    const items = notifications
+      .map((notification) => this.toResponseDto(notification))
+      .sort((a, b) => {
+        const priorityDiff =
+          priorityOrder[a.priority] - priorityOrder[b.priority];
+        if (priorityDiff !== 0) return priorityDiff;
+        return b.createdAt.getTime() - a.createdAt.getTime();
+      });
+
+    return {
+      summary: {
+        total: items.length,
+        critical: items.filter((item) => item.priority === 'critical').length,
+        outstandingAmount: items
+          .filter((item) => item.type === 'payment_outstanding')
+          .reduce((sum, item) => sum + (item.amount ?? 0), 0),
+        filesWaiting: items.filter(
+          (item) => item.type === 'upload_review_required',
+        ).length,
+      },
+      items,
+    };
+  }
+
+  /**
+   * Get active notifications only (legacy compatibility endpoint).
    */
   async getActiveNotifications(
     category?: NotificationCategory,
@@ -227,35 +292,26 @@ export class NotificationsService {
    * Get notification count badge
    */
   async getNotificationCount(): Promise<NotificationCountDto> {
-    const [total, active, actionRequired, byPriority] = await Promise.all([
-      this.notificationModel.countDocuments({}),
-      this.notificationModel.countDocuments({ status: 'active' }),
+    const scope = { status: 'active', type: { $in: ACTION_CENTER_TYPES } };
+    const [active, actionRequired, byPriority] = await Promise.all([
+      this.notificationModel.countDocuments(scope),
       this.notificationModel.countDocuments({
-        status: 'active',
+        ...scope,
         category: 'action_required',
       }),
       Promise.all([
         this.notificationModel.countDocuments({
-          status: 'active',
+          ...scope,
           priority: 'critical',
         }),
-        this.notificationModel.countDocuments({
-          status: 'active',
-          priority: 'high',
-        }),
-        this.notificationModel.countDocuments({
-          status: 'active',
-          priority: 'normal',
-        }),
-        this.notificationModel.countDocuments({
-          status: 'active',
-          priority: 'low',
-        }),
+        this.notificationModel.countDocuments({ ...scope, priority: 'high' }),
+        this.notificationModel.countDocuments({ ...scope, priority: 'normal' }),
+        this.notificationModel.countDocuments({ ...scope, priority: 'low' }),
       ]),
     ]);
 
     return {
-      total,
+      total: active,
       active,
       actionRequired,
       byPriority: {
@@ -290,6 +346,22 @@ export class NotificationsService {
         },
       );
     }
+  }
+
+  async autoResolveUploadNotifications(uploadId: string): Promise<void> {
+    await this.notificationModel.updateMany(
+      {
+        relatedUploadId: uploadId,
+        type: { $in: ['upload_review_required', 'upload_failed'] },
+        status: 'active',
+      },
+      {
+        $set: {
+          status: 'resolved',
+          resolvedAt: new Date(),
+        },
+      },
+    );
   }
 
   /**
@@ -360,8 +432,7 @@ export class NotificationsService {
         notificationKey: key,
         action: {
           label: 'รับชำระเงิน',
-          href: `/home/orders/${orderId}`,
-          action: 'pay',
+          action: 'collect_payment',
         },
       });
     }
@@ -391,8 +462,8 @@ export class NotificationsService {
           entityId: orderId,
           notificationKey: key,
           action: {
-            label: 'ดูงาน',
-            href: `/home/orders/${orderId}`,
+            label: 'เปิดรายการ',
+            action: 'open_order',
           },
         });
         break;
@@ -428,7 +499,7 @@ export class NotificationsService {
       notificationKey: key,
       action: {
         label: 'ตรวจไฟล์',
-        href: `/home/orders/${orderId}?tab=files`,
+        action: 'review_upload',
       },
     });
   }
@@ -471,7 +542,7 @@ export class NotificationsService {
           notificationKey: key,
           action: {
             label: 'อัปเดตสถานะ',
-            href: `/home/orders/${orderId}`,
+            action: 'open_order',
           },
         });
       }
@@ -513,8 +584,8 @@ export class NotificationsService {
           entityId: orderId,
           notificationKey: key,
           action: {
-            label: 'ยืนยันรายการ',
-            href: `/home/orders/${orderId}`,
+            label: 'เปิดรายการ',
+            action: 'open_order',
           },
         });
       }

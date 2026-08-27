@@ -862,27 +862,10 @@ export class OrdersService {
     this.ordersSse.emitOrder(response);
 
     try {
-      const savedOrderId = String(saved._id);
-      await this.notificationsService.createNotification({
-        type: 'order_created',
-        category: 'action_required',
-        priority: 'high',
-        title: `รายการขายใหม่ #${saved.orderNumber}`,
-        message: `${saved.customerName || 'ลูกค้า'} รอการยืนยัน`,
-        orderId: savedOrderId,
-        orderCode: saved.orderNumber,
-        customerName: saved.customerName,
-        entityType: 'order',
-        entityId: savedOrderId,
-        notificationKey: `order_created:${savedOrderId}`,
-        action: {
-          label: 'ยืนยันรายการ',
-          href: `/home/orders/${savedOrderId}`,
-        },
-      });
+      await this.notificationsService.handleOrderPaymentState(saved);
     } catch (error) {
       this.logger.error(
-        'Failed to create notification for new order',
+        'Failed to evaluate action-center state for new order',
         error instanceof Error ? error.stack : String(error),
       );
     }
