@@ -24,6 +24,18 @@ function file(
   };
 }
 
+function zipLocalEntries(...entryNames: string[]): Buffer {
+  const chunks = entryNames.map((entryName) => {
+    const name = Buffer.from(entryName, 'utf8');
+    const header = Buffer.alloc(30);
+    header.writeUInt32LE(0x04034b50, 0);
+    header.writeUInt16LE(20, 4);
+    header.writeUInt16LE(name.length, 26);
+    return Buffer.concat([header, name]);
+  });
+  return Buffer.concat(chunks);
+}
+
 describe('validateUploadedFiles', () => {
   it('accepts supported files only when extension, MIME, and signature agree', () => {
     expect(() =>
@@ -46,7 +58,7 @@ describe('validateUploadedFiles', () => {
         file(
           'sheet.xlsx',
           'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-          Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00]),
+          zipLocalEntries('[Content_Types].xml', 'xl/workbook.xml'),
         ),
       ]),
     ).not.toThrow();
@@ -74,6 +86,42 @@ describe('validateUploadedFiles', () => {
         ),
       ]),
     ).toThrow('File content does not match its declared type');
+  });
+
+  it('rejects generic ZIP content disguised as an OOXML document', () => {
+    expect(() =>
+      validateUploadedFiles([
+        file(
+          'fake.docx',
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          zipLocalEntries('random.txt'),
+        ),
+      ]),
+    ).toThrow('File content does not match its declared type');
+  });
+
+  it('rejects the wrong OOXML package family', () => {
+    expect(() =>
+      validateUploadedFiles([
+        file(
+          'fake.xlsx',
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          zipLocalEntries('[Content_Types].xml', 'word/document.xml'),
+        ),
+      ]),
+    ).toThrow('File content does not match its declared type');
+  });
+
+  it('accepts a DOCX package with required OOXML entries', () => {
+    expect(() =>
+      validateUploadedFiles([
+        file(
+          'document.docx',
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          zipLocalEntries('[Content_Types].xml', 'word/document.xml'),
+        ),
+      ]),
+    ).not.toThrow();
   });
 
   it('rejects binary payloads disguised as CSV', () => {

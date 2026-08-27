@@ -31,6 +31,7 @@ const ZIP_SIGNATURES = [
   Buffer.from([0x50, 0x4b, 0x05, 0x06]),
   Buffer.from([0x50, 0x4b, 0x07, 0x08]),
 ];
+const ZIP_LOCAL_HEADER = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
 const OLE_SIGNATURE = Buffer.from([
   0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1,
 ]);
@@ -44,6 +45,39 @@ function startsWith(buffer: Buffer, signature: Buffer): boolean {
 
 function isZip(buffer: Buffer): boolean {
   return ZIP_SIGNATURES.some((signature) => startsWith(buffer, signature));
+}
+
+function zipLocalEntryNames(buffer: Buffer): string[] {
+  const names: string[] = [];
+  let offset = 0;
+
+  while (offset <= buffer.length - 30) {
+    const headerOffset = buffer.indexOf(ZIP_LOCAL_HEADER, offset);
+    if (headerOffset < 0 || headerOffset + 30 > buffer.length) break;
+
+    const fileNameLength = buffer.readUInt16LE(headerOffset + 26);
+    const extraLength = buffer.readUInt16LE(headerOffset + 28);
+    const nameStart = headerOffset + 30;
+    const nameEnd = nameStart + fileNameLength;
+    if (nameEnd > buffer.length) break;
+
+    names.push(buffer.toString('utf8', nameStart, nameEnd));
+    offset = Math.max(
+      nameEnd + extraLength,
+      headerOffset + ZIP_LOCAL_HEADER.length,
+    );
+  }
+
+  return names;
+}
+
+function isOoxmlPackage(buffer: Buffer, contentRoot: 'word/' | 'xl/'): boolean {
+  if (!isZip(buffer)) return false;
+  const entryNames = zipLocalEntryNames(buffer);
+  return (
+    entryNames.includes('[Content_Types].xml') &&
+    entryNames.some((name) => name.startsWith(contentRoot))
+  );
 }
 
 function isCsvLike(buffer: Buffer): boolean {
@@ -79,9 +113,11 @@ function hasExpectedSignature(extension: string, buffer: Buffer): boolean {
     case '.psd':
       return startsWith(buffer, Buffer.from('8BPS', 'ascii'));
     case '.zip':
-    case '.docx':
-    case '.xlsx':
       return isZip(buffer);
+    case '.docx':
+      return isOoxmlPackage(buffer, 'word/');
+    case '.xlsx':
+      return isOoxmlPackage(buffer, 'xl/');
     case '.doc':
     case '.xls':
       return startsWith(buffer, OLE_SIGNATURE);
