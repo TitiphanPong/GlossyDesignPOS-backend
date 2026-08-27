@@ -158,6 +158,26 @@ describe('validateUploadedFiles', () => {
     ).toThrow('File content does not match its declared type');
   });
 
+  it('rejects forged central-directory names that do not match their local file headers', () => {
+    const forged = Buffer.from(
+      zipPackage('[Content_Types].xml', 'word/document.xml'),
+    );
+    const requiredName = Buffer.from('[Content_Types].xml', 'utf8');
+    const localNameOffset = forged.indexOf(requiredName);
+    expect(localNameOffset).toBeGreaterThanOrEqual(0);
+    Buffer.alloc(requiredName.length, 0x78).copy(forged, localNameOffset);
+
+    expect(() =>
+      validateUploadedFiles([
+        file(
+          'fake.docx',
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          forged,
+        ),
+      ]),
+    ).toThrow('File content does not match its declared type');
+  });
+
   it('rejects the wrong OOXML package family', () => {
     expect(() =>
       validateUploadedFiles([

@@ -31,6 +31,7 @@ const ZIP_SIGNATURES = [
   Buffer.from([0x50, 0x4b, 0x05, 0x06]),
   Buffer.from([0x50, 0x4b, 0x07, 0x08]),
 ];
+const ZIP_LOCAL_FILE_HEADER = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
 const ZIP_CENTRAL_DIRECTORY_HEADER = Buffer.from([0x50, 0x4b, 0x01, 0x02]);
 const ZIP_END_OF_CENTRAL_DIRECTORY = Buffer.from([0x50, 0x4b, 0x05, 0x06]);
 const OLE_SIGNATURE = Buffer.from([
@@ -83,15 +84,40 @@ function zipCentralDirectoryEntryNames(buffer: Buffer): string[] | null {
       return null;
     }
 
+    const compressedSize = buffer.readUInt32LE(offset + 20);
     const fileNameLength = buffer.readUInt16LE(offset + 28);
     const extraLength = buffer.readUInt16LE(offset + 30);
     const commentLengthForEntry = buffer.readUInt16LE(offset + 32);
+    const localHeaderOffset = buffer.readUInt32LE(offset + 42);
     const nameStart = offset + 46;
     const nameEnd = nameStart + fileNameLength;
     const nextOffset = nameEnd + extraLength + commentLengthForEntry;
     if (nameEnd > eocdOffset || nextOffset > eocdOffset) return null;
 
-    names.push(buffer.toString('utf8', nameStart, nameEnd));
+    const entryName = buffer.toString('utf8', nameStart, nameEnd);
+    if (
+      localHeaderOffset + 30 > centralDirectoryOffset ||
+      !buffer
+        .subarray(localHeaderOffset, localHeaderOffset + 4)
+        .equals(ZIP_LOCAL_FILE_HEADER)
+    ) {
+      return null;
+    }
+
+    const localNameLength = buffer.readUInt16LE(localHeaderOffset + 26);
+    const localExtraLength = buffer.readUInt16LE(localHeaderOffset + 28);
+    const localNameStart = localHeaderOffset + 30;
+    const localNameEnd = localNameStart + localNameLength;
+    const localDataEnd = localNameEnd + localExtraLength + compressedSize;
+    if (
+      localNameEnd > centralDirectoryOffset ||
+      localDataEnd > centralDirectoryOffset ||
+      buffer.toString('utf8', localNameStart, localNameEnd) !== entryName
+    ) {
+      return null;
+    }
+
+    names.push(entryName);
     offset = nextOffset;
   }
 
