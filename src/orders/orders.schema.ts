@@ -46,6 +46,9 @@ export class Order {
   @Prop({ unique: true, sparse: true })
   idempotencyKey?: string;
 
+  @Prop({ match: /^[a-f0-9]{64}$/ })
+  createCommandFingerprint?: string;
+
   @Prop({ unique: true, sparse: true })
   orderNumber?: string;
 
