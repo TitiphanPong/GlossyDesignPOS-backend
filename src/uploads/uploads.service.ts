@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { FilterQuery, isValidObjectId, Model } from 'mongoose';
+import { FilterQuery, isValidObjectId, Model, PipelineStage } from 'mongoose';
 import { randomInt, randomUUID } from 'node:crypto';
 import dayjs from 'dayjs';
 import { CreateUploadDto } from './dto/create-upload.dto';
@@ -8,7 +8,11 @@ import { UploadResponseDto } from './dto/upload-response.dto';
 import { Upload, UploadDocument } from './schemas/upload.schema';
 import { S3Service } from './s3/s3.service';
 import { sanitizeFilename } from './validators/upload-file.validator';
-import { ListUploadsQueryDto } from './dto/list-uploads-query.dto';
+import {
+  ListUploadsQueryDto,
+  StorageListSort,
+  StorageListStatus,
+} from './dto/list-uploads-query.dto';
 import { UpdateUploadDto } from './dto/update-upload.dto';
 import { UploadStage, UploadStatus } from './uploads.enums';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -16,6 +20,8 @@ import { NotificationsService } from '../notifications/notifications.service';
 const REGEX_SPECIAL_CHARS = /[.*+?^${}()|[\]\\]/g;
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const BANGKOK_OFFSET_MS = 7 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 @Injectable()
 export class UploadsService {
@@ -169,37 +175,251 @@ export class UploadsService {
     page: number;
     limit: number;
     total: number;
+    summary: {
+      waiting: number;
+      pending: number;
+      completed: number;
+      totalFiles: number;
+      uploadedToday: number;
+    };
   }> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
+    const skip = (page - 1) * limit;
+    const todayKey = new Date(Date.now() + BANGKOK_OFFSET_MS)
+      .toISOString()
+      .slice(0, 10);
+    const todayRange = this.getBangkokDayRange(todayKey);
 
-    const filter: FilterQuery<UploadDocument> = {};
+    const pipeline: PipelineStage[] = [];
     if (query.status) {
-      filter.status = query.status;
+      pipeline.push({ $match: { status: query.status } });
+    }
+
+    pipeline.push(
+      { $sort: { createdAt: -1, _id: -1 } },
+      {
+        $set: {
+          __storageStatus: {
+            $switch: {
+              branches: [
+                {
+                  case: {
+                    $or: [
+                      { $eq: ['$status', UploadStatus.COMPLETED] },
+                      { $eq: ['$stage', UploadStage.COMPLETED] },
+                    ],
+                  },
+                  then: StorageListStatus.COMPLETED,
+                },
+                {
+                  case: { $eq: ['$stage', UploadStage.PENDING] },
+                  then: StorageListStatus.PENDING,
+                },
+              ],
+              default: StorageListStatus.WAITING,
+            },
+          },
+          __batchMarker: {
+            $regexFind: {
+              input: { $ifNull: ['$note', ''] },
+              regex: /\[\[batch:([a-z0-9-]+)\]\]/i,
+            },
+          },
+        },
+      },
+      {
+        $set: {
+          __resolvedBatchId: {
+            $cond: [
+              { $gt: [{ $strLenCP: { $ifNull: ['$batchId', ''] } }, 0] },
+              '$batchId',
+              { $arrayElemAt: ['$__batchMarker.captures', 0] },
+            ],
+          },
+        },
+      },
+      {
+        $set: {
+          __groupKey: {
+            $cond: [
+              {
+                $gt: [
+                  { $strLenCP: { $ifNull: ['$__resolvedBatchId', ''] } },
+                  0,
+                ],
+              },
+              { $concat: ['batch:', '$__resolvedBatchId'] },
+              { $concat: ['single:', '$uploadId'] },
+            ],
+          },
+        },
+      },
+      {
+        $group: {
+          _id: '$__groupKey',
+          representativeId: { $first: '$_id' },
+          uploadId: { $first: '$uploadId' },
+          sourceIds: { $addToSet: '$uploadId' },
+          orderCode: { $first: '$orderCode' },
+          customerName: { $first: '$customerName' },
+          phone: { $first: '$phone' },
+          lineUserId: { $first: '$lineUserId' },
+          displayName: { $first: '$displayName' },
+          category: { $first: '$category' },
+          note: { $first: '$note' },
+          statusNote: { $first: '$statusNote' },
+          batchId: { $first: '$__resolvedBatchId' },
+          stage: { $first: '$stage' },
+          jobType: { $first: '$jobType' },
+          status: { $first: '$status' },
+          storageStatus: { $first: '$__storageStatus' },
+          createdAt: { $min: '$createdAt' },
+          filesNested: { $push: '$files' },
+        },
+      },
+      {
+        $set: {
+          _id: '$representativeId',
+          files: {
+            $reduce: {
+              input: '$filesNested',
+              initialValue: [],
+              in: {
+                $concatArrays: ['$$value', { $ifNull: ['$$this', []] }],
+              },
+            },
+          },
+        },
+      },
+    );
+
+    const groupedMatch: Record<string, unknown> = {};
+    if (query.storageStatus) groupedMatch.storageStatus = query.storageStatus;
+    if (query.jobType) groupedMatch.jobType = query.jobType;
+    if (query.date) {
+      const dateRange = this.getBangkokDayRange(query.date);
+      groupedMatch.createdAt = { $gte: dateRange.start, $lt: dateRange.end };
     }
     if (query.q?.trim()) {
       const safe = query.q.trim().replace(REGEX_SPECIAL_CHARS, String.raw`\$&`);
-      filter.$or = [
+      groupedMatch.$or = [
         { uploadId: { $regex: safe, $options: 'i' } },
+        { sourceIds: { $regex: safe, $options: 'i' } },
         { orderCode: { $regex: safe, $options: 'i' } },
         { customerName: { $regex: safe, $options: 'i' } },
         { phone: { $regex: safe, $options: 'i' } },
+        { jobType: { $regex: safe, $options: 'i' } },
+        { category: { $regex: safe, $options: 'i' } },
         { note: { $regex: safe, $options: 'i' } },
+        { statusNote: { $regex: safe, $options: 'i' } },
       ];
     }
+    if (Object.keys(groupedMatch).length > 0) {
+      pipeline.push({ $match: groupedMatch });
+    }
 
-    const [rows, total] = await Promise.all([
-      this.uploadModel
-        .find(filter)
-        .sort({ createdAt: -1 })
-        .skip((page - 1) * limit)
-        .limit(limit)
-        .lean(),
-      this.uploadModel.countDocuments(filter),
-    ]);
+    let sort: PipelineStage.Sort['$sort'];
+    switch (query.sort ?? StorageListSort.NEWEST) {
+      case StorageListSort.OLDEST:
+        sort = { createdAt: 1, _id: 1 };
+        break;
+      case StorageListSort.CUSTOMER:
+        sort = { customerName: 1, createdAt: -1 };
+        break;
+      case StorageListSort.STATUS:
+        sort = { storageStatus: 1, createdAt: -1 };
+        break;
+      case StorageListSort.NEWEST:
+      default:
+        sort = { createdAt: -1, _id: -1 };
+        break;
+    }
 
+    pipeline.push({
+      $facet: {
+        data: [{ $sort: sort }, { $skip: skip }, { $limit: limit }],
+        total: [{ $count: 'value' }],
+        summary: [
+          {
+            $group: {
+              _id: null,
+              waiting: {
+                $sum: {
+                  $cond: [
+                    { $eq: ['$storageStatus', StorageListStatus.WAITING] },
+                    1,
+                    0,
+                  ],
+                },
+              },
+              pending: {
+                $sum: {
+                  $cond: [
+                    { $eq: ['$storageStatus', StorageListStatus.PENDING] },
+                    1,
+                    0,
+                  ],
+                },
+              },
+              completed: {
+                $sum: {
+                  $cond: [
+                    { $eq: ['$storageStatus', StorageListStatus.COMPLETED] },
+                    1,
+                    0,
+                  ],
+                },
+              },
+              totalFiles: {
+                $sum: { $size: { $ifNull: ['$files', []] } },
+              },
+              uploadedToday: {
+                $sum: {
+                  $cond: [
+                    {
+                      $and: [
+                        { $gte: ['$createdAt', todayRange.start] },
+                        { $lt: ['$createdAt', todayRange.end] },
+                      ],
+                    },
+                    1,
+                    0,
+                  ],
+                },
+              },
+            },
+          },
+        ],
+      },
+    });
+
+    type FacetResult = {
+      data?: Array<Record<string, unknown>>;
+      total?: Array<{ value: number }>;
+      summary?: Array<{
+        waiting: number;
+        pending: number;
+        completed: number;
+        totalFiles: number;
+        uploadedToday: number;
+      }>;
+    };
+    const [result] = await this.uploadModel
+      .aggregate<FacetResult>(pipeline)
+      .exec();
+    const rows = result?.data ?? [];
+    const total = result?.total?.[0]?.value ?? 0;
+    const summary = result?.summary?.[0] ?? {
+      waiting: 0,
+      pending: 0,
+      completed: 0,
+      totalFiles: 0,
+      uploadedToday: 0,
+    };
     const data = await Promise.all(rows.map((row) => this.toListItem(row)));
-    return { data, page, limit, total };
+
+    return { data, page, limit, total, summary };
   }
 
   async updateUploadById(
@@ -282,6 +502,18 @@ export class UploadsService {
     });
   }
 
+  private getBangkokDayRange(dateText: string): { start: Date; end: Date } {
+    const start = new Date(`${dateText}T00:00:00+07:00`);
+    const normalizedDate = new Date(start.getTime() + BANGKOK_OFFSET_MS)
+      .toISOString()
+      .slice(0, 10);
+    if (Number.isNaN(start.getTime()) || normalizedDate !== dateText) {
+      throw new BadRequestException('Invalid upload date filter.');
+    }
+
+    return { start, end: new Date(start.getTime() + DAY_MS) };
+  }
+
   private selectorForUploadId(id: string): FilterQuery<UploadDocument> {
     if (isValidObjectId(id)) {
       return { $or: [{ uploadId: id }, { _id: id }] };
@@ -300,6 +532,8 @@ export class UploadsService {
     const doc = row as {
       _id: unknown;
       uploadId: string;
+      sourceIds?: string[];
+      orderCode?: string;
       customerName?: string;
       phone?: string;
       lineUserId?: string;
@@ -311,6 +545,7 @@ export class UploadsService {
       stage?: string;
       jobType: string;
       status: string;
+      storageStatus?: string;
       createdAt: Date;
       files: Array<{
         s3Key: string;
@@ -343,6 +578,10 @@ export class UploadsService {
     return {
       id: String(doc._id),
       uploadId: doc.uploadId,
+      sourceIds: doc.sourceIds?.filter((value) => Boolean(value)) ?? [
+        doc.uploadId,
+      ],
+      orderCode: doc.orderCode ?? '',
       customerName: doc.customerName ?? '',
       phone: doc.phone ?? '',
       lineUserId: doc.lineUserId ?? '',
@@ -354,6 +593,7 @@ export class UploadsService {
       category: doc.category ?? doc.jobType,
       jobType: doc.jobType,
       status: doc.status,
+      storageStatus: doc.storageStatus ?? null,
       createdAt: doc.createdAt,
       files,
     };
