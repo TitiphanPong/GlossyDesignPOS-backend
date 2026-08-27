@@ -32,7 +32,7 @@ import { AuthenticatedUser } from '../auth/auth.types';
 
 type AuthRequest = { user?: AuthenticatedUser };
 
-@Controller(['uploads', 'upload'])
+@Controller('uploads')
 export class UploadsController {
   constructor(
     private readonly uploadsService: UploadsService,
