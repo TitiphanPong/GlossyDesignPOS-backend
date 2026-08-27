@@ -19,6 +19,8 @@ describe('UploadsController (e2e)', () => {
     size: 16,
     mimeType: 'application/pdf',
     createdAt: '2026-05-31T00:00:00.000Z',
+    signedUrl: 'https://example.com/immediate-upload-preview',
+    expiresIn: 900,
     message: 'Upload success',
   });
   const getSignedUrlById = jest.fn().mockResolvedValue({
@@ -86,6 +88,8 @@ describe('UploadsController (e2e)', () => {
         size: 16,
         mimeType: 'application/pdf',
         createdAt: '2026-05-31T00:00:00.000Z',
+        signedUrl: 'https://example.com/immediate-upload-preview',
+        expiresIn: 900,
         message: 'Upload success',
       });
 

@@ -22,6 +22,7 @@ const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const BANGKOK_OFFSET_MS = 7 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
+const PUBLIC_UPLOAD_PREVIEW_TTL_SECONDS = 15 * 60;
 
 @Injectable()
 export class UploadsService {
@@ -46,6 +47,7 @@ export class UploadsService {
 
     const uploadedFiles: Upload['files'] = [];
     let savedUpload: UploadDocument | null = null;
+    let previewSignedUrl = '';
 
     try {
       for (const file of files) {
@@ -68,6 +70,15 @@ export class UploadsService {
           s3Key,
         });
       }
+
+      const previewFile = uploadedFiles[0];
+      if (!previewFile) {
+        throw new BadRequestException('At least one file is required');
+      }
+      previewSignedUrl = await this.s3Service.createSignedDownloadUrl(
+        previewFile.s3Key,
+        PUBLIC_UPLOAD_PREVIEW_TTL_SECONDS,
+      );
 
       savedUpload = await this.uploadModel.create({
         uploadId,
@@ -113,6 +124,8 @@ export class UploadsService {
       size: firstFile?.size ?? 0,
       mimeType: firstFile?.mimeType ?? 'application/octet-stream',
       createdAt: now.toISOString(),
+      signedUrl: previewSignedUrl,
+      expiresIn: PUBLIC_UPLOAD_PREVIEW_TTL_SECONDS,
       message: 'Upload success',
     };
   }

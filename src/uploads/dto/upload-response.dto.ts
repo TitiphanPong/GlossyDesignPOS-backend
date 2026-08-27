@@ -6,5 +6,7 @@ export class UploadResponseDto {
   size!: number;
   mimeType!: string;
   createdAt!: string;
+  signedUrl!: string;
+  expiresIn!: number;
   message!: string;
 }

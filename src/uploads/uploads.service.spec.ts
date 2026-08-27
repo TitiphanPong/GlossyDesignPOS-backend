@@ -24,6 +24,10 @@ type S3ServiceLike = {
   uploadPrivateObject: (
     params: Parameters<S3Service['uploadPrivateObject']>[0],
   ) => Promise<void>;
+  createSignedDownloadUrl?: (
+    key: string,
+    expiresInSeconds?: number,
+  ) => Promise<string>;
   deleteObject?: (key: string) => Promise<void>;
 };
 
@@ -43,7 +47,13 @@ describe('UploadsService', () => {
     const uploadPrivateObject: jest.MockedFunction<
       S3ServiceLike['uploadPrivateObject']
     > = jest.fn().mockResolvedValue(undefined);
-    const s3Service: S3ServiceLike = { uploadPrivateObject };
+    const createSignedDownloadUrl = jest
+      .fn()
+      .mockResolvedValue('https://signed/upload');
+    const s3Service: S3ServiceLike = {
+      uploadPrivateObject,
+      createSignedDownloadUrl,
+    };
 
     const service = new UploadsService(
       uploadModel as unknown as Model<UploadDocument>,
@@ -71,9 +81,15 @@ describe('UploadsService', () => {
       },
     ] as Express.Multer.File[];
 
-    await service.createUpload(dto, files);
+    const result = await service.createUpload(dto, files);
 
     expect(uploadPrivateObject).toHaveBeenCalledTimes(1);
+    expect(createSignedDownloadUrl).toHaveBeenCalledWith(
+      expect.stringMatching(/\/sample\.pdf$/u),
+      900,
+    );
+    expect(result.signedUrl).toBe('https://signed/upload');
+    expect(result.expiresIn).toBe(900);
     expect(create).toHaveBeenCalledWith(
       expect.objectContaining({
         customerName: dto.customerName,
@@ -94,14 +110,59 @@ describe('UploadsService', () => {
     );
   });
 
+  it('cleans up uploaded objects when immediate preview signing fails before Mongo persistence', async () => {
+    const create = jest.fn();
+    const uploadPrivateObject = jest.fn().mockResolvedValue(undefined);
+    const createSignedDownloadUrl = jest
+      .fn()
+      .mockRejectedValue(new Error('signing unavailable'));
+    const deleteObject = jest.fn().mockResolvedValue(undefined);
+    const service = new UploadsService(
+      { create } as unknown as Model<UploadDocument>,
+      {
+        uploadPrivateObject,
+        createSignedDownloadUrl,
+        deleteObject,
+      } as unknown as S3Service,
+      createNotificationsService(),
+    );
+    const dto: CreateUploadDto = {
+      customerName: 'Upload Customer',
+      phone: '0000000000',
+      jobType: JobType.DOCUMENT_PRINTING,
+    };
+    const files = [
+      {
+        originalname: 'sample.pdf',
+        mimetype: 'application/pdf',
+        size: 12,
+        buffer: Buffer.from('hello world'),
+      },
+    ] as Express.Multer.File[];
+
+    await expect(service.createUpload(dto, files)).rejects.toThrow(
+      'signing unavailable',
+    );
+
+    expect(create).not.toHaveBeenCalled();
+    expect(deleteObject).toHaveBeenCalledTimes(1);
+  });
+
   it('removes already-uploaded S3 objects when Mongo persistence fails', async () => {
     const create = jest.fn().mockRejectedValue(new Error('mongo unavailable'));
     const uploadPrivateObject = jest.fn().mockResolvedValue(undefined);
+    const createSignedDownloadUrl = jest
+      .fn()
+      .mockResolvedValue('https://signed/upload');
     const deleteObject: jest.MockedFunction<(key: string) => Promise<void>> =
       jest.fn().mockResolvedValue(undefined);
     const service = new UploadsService(
       { create } as unknown as Model<UploadDocument>,
-      { uploadPrivateObject, deleteObject } as unknown as S3Service,
+      {
+        uploadPrivateObject,
+        createSignedDownloadUrl,
+        deleteObject,
+      } as unknown as S3Service,
       createNotificationsService(),
     );
     const dto: CreateUploadDto = {
