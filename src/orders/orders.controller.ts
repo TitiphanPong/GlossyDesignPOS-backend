@@ -51,7 +51,7 @@ export class OrdersController {
     const created = await this.ordersService.create(
       order,
       idempotencyKey,
-      request.user?.role,
+      request.user,
     );
     await this.auditService.record(request.user ?? null, 'order.create', {
       type: 'order',

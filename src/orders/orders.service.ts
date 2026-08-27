@@ -8,6 +8,7 @@ import {
   Optional,
 } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
+import { createHash } from 'node:crypto';
 import { MongoServerError } from 'mongodb';
 import { Connection, isValidObjectId, Model } from 'mongoose';
 import { RunningNumberService } from '../counters/running-number.service';
@@ -33,6 +34,7 @@ import {
 } from './order-money';
 import { OrderPricingService } from './order-pricing.service';
 import { UserRole } from '../auth/auth.constants';
+import { AuthenticatedUser } from '../auth/auth.types';
 import { NotificationsService } from '../notifications/notifications.service';
 import {
   OrderReportingService,
@@ -76,11 +78,16 @@ export class OrdersService {
   async create(
     orderDto: CreateOrderDto,
     idempotencyKey?: string,
-    actorRole?: UserRole,
+    actor?: Pick<AuthenticatedUser, 'id' | 'role'> | null,
   ): Promise<OrderResponseDto> {
     const identity = this.normalizeCreateIdentity(orderDto, idempotencyKey);
+    const commandFingerprint =
+      identity.clientDraftId || identity.idempotencyKey
+        ? this.buildCreateCommandFingerprint(orderDto, identity, actor?.id)
+        : undefined;
     const existing = await this.findExistingOrderForCreate(identity);
     if (existing) {
+      this.assertCreateReplayMatches(existing, commandFingerprint);
       return this.toOrderResponse(existing);
     }
 
@@ -88,11 +95,17 @@ export class OrdersService {
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       try {
-        return await this.persistNewOrder(orderDto, identity, actorRole);
+        return await this.persistNewOrder(
+          orderDto,
+          identity,
+          actor?.role,
+          commandFingerprint,
+        );
       } catch (error) {
         const recovered = await this.recoverFromCreateError(
           error,
           identity,
+          commandFingerprint,
           attempt,
           maxAttempts,
         );
@@ -731,6 +744,61 @@ export class OrdersService {
     };
   }
 
+  private buildCreateCommandFingerprint(
+    orderDto: CreateOrderDto,
+    identity: CreateOrderIdentity,
+    actorId?: string,
+  ): string {
+    const payload = { ...orderDto } as Record<string, unknown>;
+    delete payload.clientDraftId;
+
+    const canonicalCommand = this.canonicalizeCreateCommand({
+      actorId: actorId ?? 'unauthenticated',
+      identity: {
+        clientDraftId: identity.clientDraftId ?? null,
+        idempotencyKey: identity.idempotencyKey ?? null,
+      },
+      payload,
+    });
+
+    return createHash('sha256')
+      .update(JSON.stringify(canonicalCommand))
+      .digest('hex');
+  }
+
+  private canonicalizeCreateCommand(value: unknown): unknown {
+    if (value instanceof Date) {
+      return value.toISOString();
+    }
+    if (Array.isArray(value)) {
+      return value.map((item) => this.canonicalizeCreateCommand(item));
+    }
+    if (value && typeof value === 'object') {
+      return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>)
+          .filter(([, item]) => item !== undefined)
+          .sort(([left], [right]) => left.localeCompare(right))
+          .map(([key, item]) => [key, this.canonicalizeCreateCommand(item)]),
+      );
+    }
+    return value;
+  }
+
+  private assertCreateReplayMatches(
+    existing: OrderDocument,
+    commandFingerprint: string | undefined,
+  ): void {
+    if (
+      !commandFingerprint ||
+      !existing.createCommandFingerprint ||
+      existing.createCommandFingerprint !== commandFingerprint
+    ) {
+      throw new ConflictException(
+        'Idempotency identity was already used for a different or unverifiable order command.',
+      );
+    }
+  }
+
   private async findExistingOrderForCreate(identity: CreateOrderIdentity) {
     const candidates: Record<string, string>[] = [];
     if (identity.clientDraftId) {
@@ -750,6 +818,7 @@ export class OrdersService {
     orderDto: CreateOrderDto,
     identity: CreateOrderIdentity,
     actorRole?: UserRole,
+    commandFingerprint?: string,
   ): Promise<OrderResponseDto> {
     const normalizedOrder = await this.normalizeOrderForCreate(
       orderDto,
@@ -770,6 +839,9 @@ export class OrdersService {
         : {}),
       ...(identity.idempotencyKey
         ? { idempotencyKey: identity.idempotencyKey }
+        : {}),
+      ...(commandFingerprint
+        ? { createCommandFingerprint: commandFingerprint }
         : {}),
       orderNumber,
       ...(taxInvoiceNumber
@@ -821,6 +893,7 @@ export class OrdersService {
   private async recoverFromCreateError(
     error: unknown,
     identity: CreateOrderIdentity,
+    commandFingerprint: string | undefined,
     attempt: number,
     maxAttempts: number,
   ): Promise<OrderResponseDto | null> {
@@ -838,6 +911,7 @@ export class OrdersService {
 
     const existing = await this.findOrderAfterDuplicateKey(error, identity);
     if (existing) {
+      this.assertCreateReplayMatches(existing, commandFingerprint);
       return this.toOrderResponse(existing);
     }
 
