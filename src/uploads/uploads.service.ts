@@ -10,7 +10,8 @@ import { S3Service } from './s3/s3.service';
 import { sanitizeFilename } from './validators/upload-file.validator';
 import { ListUploadsQueryDto } from './dto/list-uploads-query.dto';
 import { UpdateUploadDto } from './dto/update-upload.dto';
-import { UploadStatus } from './uploads.enums';
+import { UploadStage, UploadStatus } from './uploads.enums';
+import { NotificationsService } from '../notifications/notifications.service';
 
 const REGEX_SPECIAL_CHARS = /[.*+?^${}()|[\]\\]/g;
 const UUID_PATTERN =
@@ -24,6 +25,7 @@ export class UploadsService {
     @InjectModel(Upload.name)
     private readonly uploadModel: Model<UploadDocument>,
     private readonly s3Service: S3Service,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   async createUpload(
@@ -37,6 +39,7 @@ export class UploadsService {
     const mm = dayjs(now).format('MM');
 
     const uploadedFiles: Upload['files'] = [];
+    let savedUpload: UploadDocument | null = null;
 
     try {
       for (const file of files) {
@@ -60,7 +63,7 @@ export class UploadsService {
         });
       }
 
-      await this.uploadModel.create({
+      savedUpload = await this.uploadModel.create({
         uploadId,
         orderCode,
         customerName: dto.customerName,
@@ -81,6 +84,17 @@ export class UploadsService {
         uploadedFiles.map((file) => file.s3Key),
       );
       throw error;
+    }
+
+    if (savedUpload) {
+      try {
+        await this.notificationsService.handleUploadReview(savedUpload);
+      } catch (error) {
+        this.logger.error(
+          'Failed to create action-center item for upload',
+          error instanceof Error ? error.stack : String(error),
+        );
+      }
     }
 
     const firstFile = uploadedFiles[0];
@@ -166,6 +180,8 @@ export class UploadsService {
     if (query.q?.trim()) {
       const safe = query.q.trim().replace(REGEX_SPECIAL_CHARS, String.raw`\$&`);
       filter.$or = [
+        { uploadId: { $regex: safe, $options: 'i' } },
+        { orderCode: { $regex: safe, $options: 'i' } },
         { customerName: { $regex: safe, $options: 'i' } },
         { phone: { $regex: safe, $options: 'i' } },
         { note: { $regex: safe, $options: 'i' } },
@@ -197,6 +213,25 @@ export class UploadsService {
     if (!row) {
       return null;
     }
+
+    if (
+      row.uploadId &&
+      (row.status === UploadStatus.COMPLETED ||
+        row.stage === UploadStage.PENDING ||
+        row.stage === UploadStage.COMPLETED)
+    ) {
+      try {
+        await this.notificationsService.autoResolveUploadNotifications(
+          row.uploadId,
+        );
+      } catch (error) {
+        this.logger.error(
+          'Failed to resolve action-center item for upload',
+          error instanceof Error ? error.stack : String(error),
+        );
+      }
+    }
+
     return this.toListItem(row);
   }
 
@@ -216,6 +251,18 @@ export class UploadsService {
     const deleted = await this.uploadModel
       .findOneAndDelete({ _id: row._id })
       .exec();
+    if (deleted && row.uploadId) {
+      try {
+        await this.notificationsService.autoResolveUploadNotifications(
+          row.uploadId,
+        );
+      } catch (error) {
+        this.logger.error(
+          'Failed to resolve action-center item after upload deletion',
+          error instanceof Error ? error.stack : String(error),
+        );
+      }
+    }
     return Boolean(deleted);
   }
 

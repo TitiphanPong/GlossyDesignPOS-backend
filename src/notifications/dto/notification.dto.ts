@@ -120,6 +120,22 @@ export class NotificationCountDto {
   };
 }
 
+export class ActionCenterSummaryDto {
+  total!: number;
+
+  critical!: number;
+
+  outstandingAmount!: number;
+
+  filesWaiting!: number;
+}
+
+export class ActionCenterDto {
+  summary!: ActionCenterSummaryDto;
+
+  items!: NotificationResponseDto[];
+}
+
 export class MarkNotificationReadDto {
   @IsBoolean()
   isRead!: boolean;

@@ -4,6 +4,7 @@ import { JobType, UploadStage, UploadStatus } from './uploads.enums';
 import { CreateUploadDto } from './dto/create-upload.dto';
 import { UploadDocument } from './schemas/upload.schema';
 import { S3Service } from './s3/s3.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 type UploadModelLike = {
   create: (doc: Record<string, unknown>) => Promise<unknown>;
@@ -22,6 +23,13 @@ type S3ServiceLike = {
   deleteObject?: (key: string) => Promise<void>;
 };
 
+function createNotificationsService(): NotificationsService {
+  return {
+    handleUploadReview: jest.fn().mockResolvedValue(undefined),
+    autoResolveUploadNotifications: jest.fn().mockResolvedValue(undefined),
+  } as unknown as NotificationsService;
+}
+
 describe('UploadsService', () => {
   it('stores batchId, stage, and statusNote on create', async () => {
     const create: jest.MockedFunction<UploadModelLike['create']> = jest
@@ -36,6 +44,7 @@ describe('UploadsService', () => {
     const service = new UploadsService(
       uploadModel as unknown as Model<UploadDocument>,
       s3Service as unknown as S3Service,
+      createNotificationsService(),
     );
     const dto: CreateUploadDto = {
       customerName: 'Upload Customer',
@@ -89,6 +98,7 @@ describe('UploadsService', () => {
     const service = new UploadsService(
       { create } as unknown as Model<UploadDocument>,
       { uploadPrivateObject, deleteObject } as unknown as S3Service,
+      createNotificationsService(),
     );
     const dto: CreateUploadDto = {
       customerName: 'Upload Customer',
@@ -143,6 +153,7 @@ describe('UploadsService', () => {
         uploadPrivateObject: jest.fn(),
         deleteObject,
       } as unknown as S3Service,
+      createNotificationsService(),
     );
 
     await expect(
@@ -174,6 +185,7 @@ describe('UploadsService', () => {
         uploadPrivateObject: jest.fn(),
         deleteObject,
       } as unknown as S3Service,
+      createNotificationsService(),
     );
 
     await expect(

@@ -14,6 +14,7 @@ import {
   NotificationCountDto,
   MarkNotificationReadDto,
   ActiveNotificationsQueryDto,
+  ActionCenterDto,
 } from './dto/notification.dto';
 
 @Controller('notifications')
@@ -21,7 +22,16 @@ export class NotificationsController {
   constructor(private readonly notificationsService: NotificationsService) {}
 
   /**
-   * Get active notifications (that need action)
+   * Get the cashier action center in one consistent snapshot.
+   * GET /notifications/action-center
+   */
+  @Get('action-center')
+  async getActionCenter(): Promise<ActionCenterDto> {
+    return this.notificationsService.getActionCenter();
+  }
+
+  /**
+   * Get active notifications (legacy compatibility endpoint).
    * GET /notifications/active?category=action_required
    */
   @Get('active')
