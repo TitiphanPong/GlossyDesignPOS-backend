@@ -7,9 +7,9 @@ import {
   NotFoundException,
   Optional,
 } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
+import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { MongoServerError } from 'mongodb';
-import { isValidObjectId, Model } from 'mongoose';
+import { Connection, isValidObjectId, Model } from 'mongoose';
 import { RunningNumberService } from '../counters/running-number.service';
 import { OrderResponseDto } from './dto/order-response.dto';
 import { PublicTrackingResponseDto } from './dto/tracking-response.dto';
@@ -70,6 +70,7 @@ export class OrdersService {
     private readonly orderPricing: OrderPricingService,
     @Optional() private readonly orderReporting: OrderReportingService,
     private readonly notificationsService: NotificationsService,
+    @InjectConnection() private readonly mongoConnection: Connection,
   ) {}
 
   async create(
@@ -253,86 +254,160 @@ export class OrdersService {
 
   async convertToTaxInvoice(id: string): Promise<OrderResponseDto> {
     this.assertMongoObjectId(id, 'order id');
-    const existing = await this.orderModel.findById(id).exec();
-    if (!existing) {
-      throw new NotFoundException(`Order not found for id "${id}".`);
-    }
-    const storedSubtotal =
-      Number(existing.subtotal) || Number(existing.total) || 0;
-    const taxableAmount = Math.max(
-      0,
-      storedSubtotal - (Number(existing.discount) || 0),
-    );
-    const vatAmount = Math.round(taxableAmount * 0.07 * 100) / 100;
-    const grandTotal = Math.round((taxableAmount + vatAmount) * 100) / 100;
-    if (
-      existing.taxInvoice === 'yes' &&
-      Number(existing.grandTotal) === grandTotal &&
-      Number(existing.vatAmount) === vatAmount
-    ) {
-      return this.toOrderResponse(existing);
-    }
 
-    const existingIssueDate =
-      existing.saleDate ??
-      (existing.toObject() as OrderPlainObject).createdAt ??
-      new Date();
-    const taxInvoiceNumber =
-      existing.invoiceNumber &&
-      existing.bookNo &&
-      existing.invoiceSequence &&
-      existing.invoicePeriod
-        ? undefined
-        : await this.runningNumberService.generateTaxInvoiceNumber(
-            existingIssueDate,
+    const transactionResult = await this.mongoConnection.transaction(
+      async (session) => {
+        const existing = await this.orderModel
+          .findById(id)
+          .session(session)
+          .exec();
+        if (!existing) {
+          throw new NotFoundException(`Order not found for id "${id}".`);
+        }
+
+        const invoiceIdentity = [
+          existing.invoiceNumber,
+          existing.bookNo,
+          existing.invoiceSequence,
+          existing.invoicePeriod,
+        ];
+        const hasAnyInvoiceIdentity = invoiceIdentity.some(Boolean);
+        const hasCompleteInvoiceIdentity = invoiceIdentity.every(Boolean);
+        if (hasAnyInvoiceIdentity && !hasCompleteInvoiceIdentity) {
+          throw new ConflictException(
+            'Tax invoice identity is incomplete. Reconciliation is required before conversion.',
           );
-    const invoiceNumber =
-      existing.invoiceNumber ?? taxInvoiceNumber?.invoiceNumber;
-    const bookNo = existing.bookNo ?? taxInvoiceNumber?.bookNo;
-    const invoiceSequence =
-      existing.invoiceSequence ?? taxInvoiceNumber?.invoiceSequence;
-    const invoicePeriod =
-      existing.invoicePeriod ?? taxInvoiceNumber?.invoicePeriod;
-    const paidAmount = Number(existing.paidAmount) || 0;
-    const remainingTotal = Math.max(
-      0,
-      Math.round((grandTotal - paidAmount) * 100) / 100,
+        }
+
+        const storedSubtotalMinor = toMinorUnits(
+          Number(existing.subtotal) || Number(existing.total) || 0,
+          'subtotal',
+        );
+        const discountMinor = toMinorUnits(
+          Number(existing.discount) || 0,
+          'discount',
+        );
+        const taxableMinor = Math.max(0, storedSubtotalMinor - discountMinor);
+        const vatMinor = Math.round((taxableMinor * 7) / 100);
+        const grandTotalMinor = taxableMinor + vatMinor;
+        const paidMinor = this.sumPaymentFactsMinor(existing);
+        const currentGrandTotalMinor = toMinorUnits(
+          existing.grandTotal,
+          'grand total',
+        );
+        const storedPaidMinor = toMinorUnits(
+          existing.paidAmount ?? 0,
+          'paid amount',
+        );
+        const storedDepositMinor = toMinorUnits(
+          existing.depositTotal ?? 0,
+          'deposit total',
+        );
+        const storedRemainingMinor = toMinorUnits(
+          existing.remainingTotal,
+          'remaining total',
+        );
+        const expectedCurrentRemainingMinor = Math.max(
+          0,
+          currentGrandTotalMinor - paidMinor,
+        );
+        if (
+          paidMinor > currentGrandTotalMinor ||
+          storedPaidMinor !== paidMinor ||
+          storedDepositMinor !== paidMinor ||
+          storedRemainingMinor !== expectedCurrentRemainingMinor
+        ) {
+          throw new ConflictException(
+            'Stored payment totals do not reconcile with payment facts. Reconciliation is required.',
+          );
+        }
+
+        const vatAmount = fromMinorUnits(vatMinor);
+        const grandTotal = fromMinorUnits(grandTotalMinor);
+        const remainingMinor = Math.max(0, grandTotalMinor - paidMinor);
+        const remainingTotal = fromMinorUnits(remainingMinor);
+        let status: OrderStatus = 'partial';
+        if (paidMinor <= 0) {
+          status = 'awaiting_payment';
+        } else if (remainingMinor === 0) {
+          status = 'paid';
+        }
+
+        const alreadyConverted =
+          existing.taxInvoice === 'yes' &&
+          hasCompleteInvoiceIdentity &&
+          toMinorUnits(existing.grandTotal, 'grand total') ===
+            grandTotalMinor &&
+          toMinorUnits(existing.vatAmount ?? 0, 'VAT amount') === vatMinor &&
+          toMinorUnits(existing.remainingTotal, 'remaining total') ===
+            remainingMinor &&
+          existing.status === status;
+        if (alreadyConverted) {
+          return { order: existing, changed: false };
+        }
+
+        const existingIssueDate =
+          existing.saleDate ??
+          (existing.toObject() as OrderPlainObject).createdAt ??
+          new Date();
+        const allocated = hasCompleteInvoiceIdentity
+          ? undefined
+          : await this.runningNumberService.generateTaxInvoiceNumber(
+              existingIssueDate,
+              session,
+            );
+        const invoiceNumber =
+          existing.invoiceNumber ?? allocated?.invoiceNumber;
+        const bookNo = existing.bookNo ?? allocated?.bookNo;
+        const invoiceSequence =
+          existing.invoiceSequence ?? allocated?.invoiceSequence;
+        const invoicePeriod =
+          existing.invoicePeriod ?? allocated?.invoicePeriod;
+        if (!invoiceNumber || !bookNo || !invoiceSequence || !invoicePeriod) {
+          throw new InternalServerErrorException(
+            'Failed to allocate a complete tax invoice identity.',
+          );
+        }
+
+        const updated = await this.orderModel
+          .findOneAndUpdate(
+            { _id: id },
+            {
+              $set: {
+                taxInvoice: 'yes',
+                invoiceNumber,
+                bookNo,
+                invoiceSequence,
+                invoicePeriod,
+                vatAmount,
+                grandTotal,
+                remainingTotal,
+                status,
+              },
+            },
+            { new: true, runValidators: true, session },
+          )
+          .exec();
+        if (!updated) {
+          throw new InternalServerErrorException(
+            'Tax invoice conversion did not update the order.',
+          );
+        }
+
+        return { order: updated, changed: true };
+      },
     );
-    let status: OrderStatus = 'partial';
-    if (paidAmount <= 0) {
-      status = 'awaiting_payment';
-    } else if (remainingTotal === 0) {
-      status = 'paid';
-    }
-    const updated = await this.orderModel
-      .findOneAndUpdate(
-        { _id: id },
-        {
-          $set: {
-            taxInvoice: 'yes',
-            invoiceNumber,
-            ...(bookNo ? { bookNo } : {}),
-            ...(invoiceSequence ? { invoiceSequence } : {}),
-            ...(invoicePeriod ? { invoicePeriod } : {}),
-            vatAmount,
-            grandTotal,
-            remainingTotal,
-            status,
-          },
-        },
-        { new: true, runValidators: true },
-      )
-      .exec();
 
-    if (!updated) {
-      const latest = await this.orderModel.findById(id).exec();
-      if (!latest)
-        throw new NotFoundException(`Order not found for id "${id}".`);
-      return this.toOrderResponse(latest);
+    if (!transactionResult) {
+      throw new InternalServerErrorException(
+        'Tax invoice conversion transaction returned no result.',
+      );
     }
 
-    const response = this.toOrderResponse(updated);
-    this.ordersSse.emitOrder(response);
+    const response = this.toOrderResponse(transactionResult.order);
+    if (transactionResult.changed) {
+      this.ordersSse.emitOrder(response);
+    }
     return response;
   }
 
