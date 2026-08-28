@@ -9,6 +9,7 @@ import { ProductModule } from './products/product.module';
 import { QuickProductModule } from './quick-products/quick-product.module';
 import { UploadsModule } from './uploads/uploads.module';
 import { HealthController } from './health.controller';
+import { HealthService } from './health.service';
 import { AuthModule } from './auth/auth.module';
 import { AuthGuard } from './auth/auth.guard';
 import { DashboardModule } from './dashboard/dashboard.module';
@@ -40,6 +41,7 @@ import { InventoryModule } from './inventory/inventory.module';
   ],
   controllers: [HealthController],
   providers: [
+    HealthService,
     {
       provide: APP_GUARD,
       useClass: ThrottlerGuard,

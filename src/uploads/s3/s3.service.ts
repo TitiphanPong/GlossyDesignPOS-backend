@@ -7,6 +7,7 @@ import { ConfigService } from '@nestjs/config';
 import {
   DeleteObjectCommand,
   GetObjectCommand,
+  HeadBucketCommand,
   PutObjectCommand,
   S3Client,
   ServerSideEncryption,
@@ -72,6 +73,19 @@ export class S3Service {
         error as Error,
       );
       throw new InternalServerErrorException('Failed to upload file');
+    }
+  }
+
+  async checkReadiness(timeoutMs: number): Promise<void> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      await this.s3Client.send(new HeadBucketCommand({ Bucket: this.bucket }), {
+        abortSignal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeout);
     }
   }
 

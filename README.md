@@ -48,6 +48,14 @@ npm run start:dev
 npm run test:e2e
 ```
 
+## Health probes
+
+- `GET /health` is the cheap public liveness probe. It only confirms that the Node process can answer HTTP and should not be used to gate production traffic.
+- `GET /health/ready` is the bounded public readiness probe used by `render.yaml`. It returns `200 { "status": "ready" }` only when MongoDB responds to a ping and S3 accepts a non-mutating bucket capability check; otherwise it returns HTTP 503 with only a generic unready status.
+- The S3 readiness check uses `HeadBucket`, so the deployed AWS principal must have the non-mutating bucket permission required by that API in addition to the existing object permissions. No bucket name, credential, connection string, or dependency error detail is exposed by the public readiness response.
+
+Production traffic/instance health checks should target `/health/ready`; monitoring that only needs process liveness may target `/health`.
+
 Included e2e cases:
 - success upload
 - invalid file type

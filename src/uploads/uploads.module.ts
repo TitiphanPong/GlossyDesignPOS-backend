@@ -15,6 +15,6 @@ import { NotificationsModule } from '../notifications/notifications.module';
   ],
   controllers: [UploadsController],
   providers: [UploadsService, S3Service],
-  exports: [UploadsService, MongooseModule],
+  exports: [UploadsService, S3Service, MongooseModule],
 })
 export class UploadsModule {}
