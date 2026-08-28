@@ -10,8 +10,18 @@ import {
   MaxLength,
   Min,
 } from 'class-validator';
-import { ORDER_STATUSES, ORDER_TYPES, PAYMENT_METHODS } from '../orders.schema';
-import type { OrderStatus, OrderType, PaymentMethod } from '../orders.schema';
+import {
+  ORDER_STATUSES,
+  ORDER_TYPES,
+  ORDER_WORKFLOW_STATUSES,
+  PAYMENT_METHODS,
+} from '../orders.schema';
+import type {
+  OrderStatus,
+  OrderType,
+  OrderWorkflowStatus,
+  PaymentMethod,
+} from '../orders.schema';
 
 export class ListOrdersQueryDto {
   @IsOptional()
@@ -35,6 +45,10 @@ export class ListOrdersQueryDto {
   @IsOptional()
   @IsIn(ORDER_STATUSES)
   status?: OrderStatus;
+
+  @IsOptional()
+  @IsIn(ORDER_WORKFLOW_STATUSES)
+  workflowStatus?: OrderWorkflowStatus;
 
   @IsOptional()
   @IsIn(['unpaid'])
