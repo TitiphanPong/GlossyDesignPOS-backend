@@ -10,7 +10,7 @@ import {
   ExportOrdersQueryDto,
   ListOrdersQueryDto,
 } from './dto/list-orders-query.dto';
-import { Order, OrderDocument } from './orders.schema';
+import { Order, OrderDocument, ORDER_WORKFLOW_STATUSES } from './orders.schema';
 
 const BANGKOK_OFFSET_MS = 7 * 60 * 60 * 1000;
 const DAY_MS = 86_400_000;
@@ -62,6 +62,56 @@ function amountExpression(): Record<string, unknown> {
 
 function saleDateExpression(): Record<string, unknown> {
   return { $ifNull: ['$saleDate', '$createdAt'] };
+}
+
+export function workflowStatusExpression(
+  fallback: string | null = 'pending',
+): Record<string, unknown> {
+  const workflowStatuses = [...ORDER_WORKFLOW_STATUSES];
+  return {
+    $cond: [
+      { $in: ['$workflowStatus', workflowStatuses] },
+      '$workflowStatus',
+      {
+        $let: {
+          vars: {
+            historicalWorkflowStatus: {
+              $arrayElemAt: [
+                {
+                  $map: {
+                    input: {
+                      $filter: {
+                        input: { $ifNull: ['$statusHistory', []] },
+                        as: 'history',
+                        cond: {
+                          $in: ['$$history.status', workflowStatuses],
+                        },
+                      },
+                    },
+                    as: 'history',
+                    in: '$$history.status',
+                  },
+                },
+                -1,
+              ],
+            },
+          },
+          in: {
+            $ifNull: [
+              '$$historicalWorkflowStatus',
+              {
+                $cond: [
+                  { $in: ['$status', workflowStatuses] },
+                  '$status',
+                  fallback,
+                ],
+              },
+            ],
+          },
+        },
+      },
+    ],
+  };
 }
 
 function initialPaidExpression(): Record<string, unknown> {
@@ -244,6 +294,16 @@ export class OrderReportingService {
       ];
     }
     if (query.status) filter.status = query.status;
+    if (query.workflowStatus) {
+      filter.$and = [
+        ...(filter.$and ?? []),
+        {
+          $expr: {
+            $eq: [workflowStatusExpression(), query.workflowStatus],
+          },
+        },
+      ];
+    }
     if (query.payment === 'unpaid') {
       filter.remainingTotal = { $gt: 0 };
       filter.$and = [...(filter.$and ?? []), { status: { $ne: 'cancelled' } }];

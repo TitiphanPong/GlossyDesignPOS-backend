@@ -4,19 +4,24 @@ import { Model, PipelineStage } from 'mongoose';
 import { Order, OrderDocument, ORDER_STATUSES } from '../orders/orders.schema';
 import { Upload, UploadDocument } from '../uploads/schemas/upload.schema';
 import { DashboardSummaryQueryDto } from './dto/dashboard-summary-query.dto';
-import { OrderReportingService } from '../orders/order-reporting.service';
+import {
+  OrderReportingService,
+  workflowStatusExpression,
+} from '../orders/order-reporting.service';
+import {
+  StockItem,
+  StockItemDocument,
+} from '../inventory/schemas/stock-item.schema';
 
-type StatusRow = { _id: string; count: number };
-type AgingRow = { _id: string; total: number };
+type StatusRow = { _id: string; count: number; unclassified?: number };
+type AgingRow = { _id: string; total: number; orders: number };
 
 const DAY_MS = 86_400_000;
 const BANGKOK_OFFSET_MS = 7 * 60 * 60 * 1000;
-const ACTIVE_STATUSES = [
+const ACTIVE_WORKFLOW_STATUSES = [
   'pending',
   'producing',
-  'awaiting_payment',
   'ready_for_pickup',
-  'partial',
 ] as const;
 
 function bangkokDayStart(value = new Date()): Date {
@@ -36,49 +41,88 @@ export class DashboardService {
     @InjectModel(Order.name) private readonly orderModel: Model<OrderDocument>,
     @InjectModel(Upload.name)
     private readonly uploadModel: Model<UploadDocument>,
+    @InjectModel(StockItem.name)
+    private readonly stockItemModel: Model<StockItemDocument>,
     private readonly orderReporting: OrderReportingService,
   ) {}
 
   async getSummary(query: DashboardSummaryQueryDto = {}) {
     const todayStart = bangkokDayStart();
     const tomorrowStart = new Date(todayStart.getTime() + DAY_MS);
-    const [metrics, statusRows, tasks, agingRows, uploadRows, recentUploads] =
-      await Promise.all([
-        this.orderReporting.getDashboardMetrics(query),
-        this.orderModel.aggregate<StatusRow>([
-          { $match: { status: { $in: [...ORDER_STATUSES] } } },
-          { $group: { _id: '$status', count: { $sum: 1 } } },
-        ]),
-        this.orderModel
-          .find({ status: { $in: [...ACTIVE_STATUSES] } })
-          .sort({ updatedAt: -1 })
-          .limit(8)
-          .select(
-            'orderId orderNumber customerName cart status remainingTotal createdAt updatedAt',
-          )
-          .lean(),
-        this.orderModel.aggregate<AgingRow>(this.agingPipeline(todayStart)),
-        this.uploadModel.aggregate<{
-          _id: string;
-          uploads: number;
-          files: number;
-        }>([
-          { $match: { createdAt: { $gte: todayStart, $lt: tomorrowStart } } },
-          {
-            $group: {
-              _id: '$status',
-              uploads: { $sum: 1 },
-              files: { $sum: { $size: { $ifNull: ['$files', []] } } },
+    const [
+      metrics,
+      statusRows,
+      workflowRows,
+      tasks,
+      agingRows,
+      uploadRows,
+      filesWaiting,
+      recentUploads,
+      lowStock,
+    ] = await Promise.all([
+      this.orderReporting.getDashboardMetrics(query),
+      this.orderModel.aggregate<StatusRow>([
+        { $match: { status: { $in: [...ORDER_STATUSES] } } },
+        { $group: { _id: '$status', count: { $sum: 1 } } },
+      ]),
+      this.orderModel.aggregate<StatusRow>([
+        {
+          $addFields: {
+            _effectiveWorkflowStatus: workflowStatusExpression(),
+            _classifiedWorkflowStatus: workflowStatusExpression(null),
+          },
+        },
+        {
+          $group: {
+            _id: '$_effectiveWorkflowStatus',
+            count: { $sum: 1 },
+            unclassified: {
+              $sum: {
+                $cond: [{ $eq: ['$_classifiedWorkflowStatus', null] }, 1, 0],
+              },
             },
           },
-        ]),
-        this.uploadModel
-          .find({ createdAt: { $gte: todayStart, $lt: tomorrowStart } })
-          .sort({ createdAt: -1 })
-          .limit(5)
-          .select('uploadId customerName status files createdAt')
-          .lean(),
-      ]);
+        },
+      ]),
+      this.orderModel
+        .find({
+          $expr: {
+            $in: [workflowStatusExpression(), [...ACTIVE_WORKFLOW_STATUSES]],
+          },
+        })
+        .sort({ updatedAt: -1 })
+        .limit(8)
+        .select(
+          'orderId orderNumber customerName cart status workflowStatus statusHistory remainingTotal createdAt updatedAt',
+        )
+        .lean(),
+      this.orderModel.aggregate<AgingRow>(this.agingPipeline(todayStart)),
+      this.uploadModel.aggregate<{
+        _id: string;
+        uploads: number;
+        files: number;
+      }>([
+        { $match: { createdAt: { $gte: todayStart, $lt: tomorrowStart } } },
+        {
+          $group: {
+            _id: '$status',
+            uploads: { $sum: 1 },
+            files: { $sum: { $size: { $ifNull: ['$files', []] } } },
+          },
+        },
+      ]),
+      this.uploadModel.countDocuments({ status: 'pending' }),
+      this.uploadModel
+        .find({ createdAt: { $gte: todayStart, $lt: tomorrowStart } })
+        .sort({ createdAt: -1 })
+        .limit(5)
+        .select('uploadId customerName status files createdAt')
+        .lean(),
+      this.stockItemModel.countDocuments({
+        active: true,
+        $expr: { $lte: ['$onHand', '$minimumLevel'] },
+      }),
+    ]);
 
     const status = Object.fromEntries(
       ORDER_STATUSES.map((key) => [
@@ -87,6 +131,16 @@ export class DashboardService {
       ]),
     );
     const outstanding = agingRows.reduce((sum, row) => sum + row.total, 0);
+    const outstandingOrders = agingRows.reduce(
+      (sum, row) => sum + row.orders,
+      0,
+    );
+    const workflow = Object.fromEntries(
+      ACTIVE_WORKFLOW_STATUSES.map((key) => [
+        key,
+        workflowRows.find((row) => row._id === key)?.count ?? 0,
+      ]),
+    );
 
     return {
       generatedAt: new Date().toISOString(),
@@ -105,15 +159,26 @@ export class DashboardService {
       },
       paymentSummary: metrics.paymentSummary,
       orderStatus: status,
+      operations: {
+        workflow,
+        outstanding: {
+          orders: outstandingOrders,
+          amount: outstanding,
+        },
+        filesWaiting,
+        lowStock,
+        unclassifiedWorkflow: workflowRows.reduce(
+          (sum, row) => sum + (row.unclassified ?? 0),
+          0,
+        ),
+      },
       salesTrend: metrics.salesTrend,
       topProducts: metrics.topProducts,
       quickSeller: metrics.quickSeller,
       uploads: {
         newFiles: uploadRows.reduce((sum, row) => sum + row.files, 0),
         newUploads: uploadRows.reduce((sum, row) => sum + row.uploads, 0),
-        waitingReview: uploadRows
-          .filter((row) => row._id === 'pending')
-          .reduce((sum, row) => sum + row.uploads, 0),
+        waitingReview: filesWaiting,
         unlinked: 0,
       },
       outstandingAging: {
@@ -188,6 +253,7 @@ export class DashboardService {
             },
           },
           total: { $sum: '$remainingTotal' },
+          orders: { $sum: 1 },
         },
       },
     ];

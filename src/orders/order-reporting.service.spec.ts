@@ -78,6 +78,16 @@ describe('OrderReportingService', () => {
     expect(filter.$and).toContainEqual({ status: { $ne: 'cancelled' } });
   });
 
+  it('filters workflow drill-downs with the effective workflow status', () => {
+    const filter = service.buildOrderFilter({ workflowStatus: 'producing' });
+    const serialized = JSON.stringify(filter);
+
+    expect(serialized).toContain('workflowStatus');
+    expect(serialized).toContain('statusHistory');
+    expect(serialized).toContain('producing');
+    expect(serialized).toContain('pending');
+  });
+
   it('excludes cancelled orders from Dashboard payment collections', async () => {
     const pipelines: PipelineStage[][] = [];
     const aggregate = jest.fn((pipeline: PipelineStage[]) => {
