@@ -13,7 +13,7 @@ import {
   StockItemDocument,
 } from '../inventory/schemas/stock-item.schema';
 
-type StatusRow = { _id: string; count: number };
+type StatusRow = { _id: string; count: number; unclassified?: number };
 type AgingRow = { _id: string; total: number; orders: number };
 
 const DAY_MS = 86_400_000;
@@ -67,12 +67,20 @@ export class DashboardService {
       ]),
       this.orderModel.aggregate<StatusRow>([
         {
-          $addFields: { _effectiveWorkflowStatus: workflowStatusExpression() },
+          $addFields: {
+            _effectiveWorkflowStatus: workflowStatusExpression(),
+            _classifiedWorkflowStatus: workflowStatusExpression(null),
+          },
         },
         {
           $group: {
             _id: '$_effectiveWorkflowStatus',
             count: { $sum: 1 },
+            unclassified: {
+              $sum: {
+                $cond: [{ $eq: ['$_classifiedWorkflowStatus', null] }, 1, 0],
+              },
+            },
           },
         },
       ]),
@@ -159,6 +167,10 @@ export class DashboardService {
         },
         filesWaiting,
         lowStock,
+        unclassifiedWorkflow: workflowRows.reduce(
+          (sum, row) => sum + (row.unclassified ?? 0),
+          0,
+        ),
       },
       salesTrend: metrics.salesTrend,
       topProducts: metrics.topProducts,

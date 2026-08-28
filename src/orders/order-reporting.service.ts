@@ -64,7 +64,9 @@ function saleDateExpression(): Record<string, unknown> {
   return { $ifNull: ['$saleDate', '$createdAt'] };
 }
 
-export function workflowStatusExpression(): Record<string, unknown> {
+export function workflowStatusExpression(
+  fallback: string | null = 'pending',
+): Record<string, unknown> {
   const workflowStatuses = [...ORDER_WORKFLOW_STATUSES];
   return {
     $cond: [
@@ -101,7 +103,7 @@ export function workflowStatusExpression(): Record<string, unknown> {
                 $cond: [
                   { $in: ['$status', workflowStatuses] },
                   '$status',
-                  'pending',
+                  fallback,
                 ],
               },
             ],

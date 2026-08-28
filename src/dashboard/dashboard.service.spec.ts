@@ -15,7 +15,7 @@ describe('DashboardService', () => {
     const aggregateResults = [
       [{ _id: 'paid', count: 5 }],
       [
-        { _id: 'pending', count: 2 },
+        { _id: 'pending', count: 2, unclassified: 1 },
         { _id: 'producing', count: 3 },
         { _id: 'ready_for_pickup', count: 1 },
       ],
@@ -84,6 +84,7 @@ describe('DashboardService', () => {
       outstanding: { orders: 3, amount: 350.25 },
       filesWaiting: 7,
       lowStock: 4,
+      unclassifiedWorkflow: 1,
     });
     expect(summary.uploads.waitingReview).toBe(7);
     expect(uploadModel.countDocuments).toHaveBeenCalledWith({
