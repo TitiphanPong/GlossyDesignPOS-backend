@@ -392,7 +392,9 @@ export class OrderReportingService {
     ] = await Promise.all([
       this.salesAggregate(current),
       this.salesAggregate(previous),
-      this.orderModel.aggregate<ReceivedRow>(this.receivedPipeline(current)),
+      this.orderModel.aggregate<ReceivedRow>(
+        this.receivedPipeline(current, { status: { $ne: 'cancelled' } }),
+      ),
       this.orderModel.aggregate<TrendRow>([
         {
           $match: {
