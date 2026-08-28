@@ -76,6 +76,14 @@ const PUBLIC_MILESTONE_BY_STATUS: Partial<
   cancelled: 'cancelled',
 };
 
+const NEXT_PRODUCTION_WORKFLOW_STATUS: Partial<
+  Record<OrderWorkflowStatus, OrderWorkflowStatus>
+> = {
+  pending: 'producing',
+  producing: 'ready_for_pickup',
+  ready_for_pickup: 'delivered',
+};
+
 @Injectable()
 export class OrdersService {
   private readonly logger = new Logger(OrdersService.name);
@@ -114,6 +122,7 @@ export class OrdersService {
           orderDto,
           identity,
           actor?.role,
+          actor?.id,
           commandFingerprint,
         );
       } catch (error) {
@@ -185,35 +194,24 @@ export class OrdersService {
     id: string,
     status: OrderStatus,
     statusNote?: string,
+    actor?: Pick<AuthenticatedUser, 'id'> | null,
   ): Promise<OrderResponseDto | null> {
     this.assertWorkflowStatusWritable(status);
     this.assertMongoObjectId(id, 'order id');
     const workflowStatus = status as OrderWorkflowStatus;
-    const updated = await this.orderModel
-      .findByIdAndUpdate(
-        id,
-        {
-          $set: {
-            workflowStatus,
-            ...(workflowStatus === 'cancelled' ? { status: 'cancelled' } : {}),
-          },
-          $push: {
-            statusHistory: {
-              status: workflowStatus,
-              note: statusNote,
-              changedAt: new Date(),
-            },
-          },
-        },
-        { new: true, runValidators: true },
-      )
-      .exec();
+    const transition = await this.transitionWorkflowStatus(
+      id,
+      workflowStatus,
+      statusNote,
+      actor?.id,
+    );
 
-    if (!updated) return null;
+    if (!transition) return null;
 
-    const response = this.toOrderResponse(updated);
-
-    this.emitForStatus(response, workflowStatus);
+    const response = this.toOrderResponse(transition.order);
+    if (transition.changed) {
+      this.emitForStatus(response, workflowStatus);
+    }
 
     return response;
   }
@@ -221,6 +219,7 @@ export class OrdersService {
   async updateOrder(
     id: string,
     updateDto: UpdateOrderCustomerDto,
+    actor?: Pick<AuthenticatedUser, 'id'> | null,
   ): Promise<OrderResponseDto> {
     this.assertMongoObjectId(id, 'order id');
     const { status, statusNote, ...customerFields } = updateDto;
@@ -233,7 +232,7 @@ export class OrdersService {
     }
 
     if (status !== undefined && !hasCustomerFields) {
-      const updated = await this.updateStatus(id, status, statusNote);
+      const updated = await this.updateStatus(id, status, statusNote, actor);
       if (!updated) {
         throw new NotFoundException(`Order not found for id "${id}".`);
       }
@@ -248,44 +247,45 @@ export class OrdersService {
       update.orderType = 'NORMAL';
     }
 
-    if (status !== undefined) {
-      const workflowStatus = status as OrderWorkflowStatus;
-      update.workflowStatus = workflowStatus;
-      if (workflowStatus === 'cancelled') {
-        update.status = 'cancelled';
-      }
-    }
-
     if (!Object.keys(update).length) {
       throw new BadRequestException(
         'At least one order field must be provided.',
       );
     }
 
-    const mongoUpdate: Record<string, unknown> = { $set: update };
     if (status !== undefined) {
-      mongoUpdate.$push = {
-        statusHistory: {
-          status,
-          note: statusNote,
-          changedAt: new Date(),
-        },
-      };
+      const workflowStatus = status as OrderWorkflowStatus;
+      const transition = await this.transitionWorkflowStatus(
+        id,
+        workflowStatus,
+        statusNote,
+        actor?.id,
+        update,
+      );
+      if (!transition) {
+        throw new NotFoundException(`Order not found for id "${id}".`);
+      }
+
+      const response = this.toOrderResponse(transition.order);
+      if (transition.changed) {
+        this.emitForStatus(response, workflowStatus);
+      }
+      return response;
     }
 
     const updated = await this.orderModel
-      .findByIdAndUpdate(id, mongoUpdate, { new: true, runValidators: true })
+      .findByIdAndUpdate(
+        id,
+        { $set: update },
+        { new: true, runValidators: true },
+      )
       .exec();
 
     if (!updated) {
       throw new NotFoundException(`Order not found for id "${id}".`);
     }
 
-    const response = this.toOrderResponse(updated);
-    if (status !== undefined) {
-      this.emitForStatus(response, status);
-    }
-    return response;
+    return this.toOrderResponse(updated);
   }
 
   async convertToTaxInvoice(id: string): Promise<OrderResponseDto> {
@@ -875,6 +875,81 @@ export class OrdersService {
     }, 0);
   }
 
+  private async transitionWorkflowStatus(
+    id: string,
+    workflowStatus: OrderWorkflowStatus,
+    statusNote?: string,
+    actorId?: string,
+    additionalSet: Partial<Order> = {},
+  ): Promise<{ order: OrderDocument; changed: boolean } | null> {
+    const existing = await this.orderModel.findById(id).exec();
+    if (!existing) return null;
+
+    const plain = existing.toObject() as OrderPlainObject;
+    const currentWorkflowStatus = this.resolveWorkflowStatus(plain);
+
+    if (currentWorkflowStatus === workflowStatus) {
+      if (!Object.keys(additionalSet).length) {
+        return { order: existing, changed: false };
+      }
+
+      const updatedSameState = await this.orderModel
+        .findByIdAndUpdate(
+          id,
+          { $set: additionalSet },
+          { new: true, runValidators: true },
+        )
+        .exec();
+      return updatedSameState
+        ? { order: updatedSameState, changed: false }
+        : null;
+    }
+
+    if (workflowStatus !== 'cancelled') {
+      const expectedNext =
+        NEXT_PRODUCTION_WORKFLOW_STATUS[currentWorkflowStatus];
+      if (expectedNext !== workflowStatus) {
+        throw new ConflictException(
+          `Invalid workflow transition from ${currentWorkflowStatus} to ${workflowStatus}.`,
+        );
+      }
+    }
+
+    const workflowPredicate = plain.workflowStatus
+      ? { workflowStatus: currentWorkflowStatus }
+      : { workflowStatus: { $exists: false } };
+    const changedAt = new Date();
+    const updated = await this.orderModel
+      .findOneAndUpdate(
+        { _id: id, ...workflowPredicate },
+        {
+          $set: {
+            ...additionalSet,
+            workflowStatus,
+            ...(workflowStatus === 'cancelled' ? { status: 'cancelled' } : {}),
+          },
+          $push: {
+            statusHistory: {
+              status: workflowStatus,
+              note: statusNote,
+              changedAt,
+              ...(actorId ? { changedBy: actorId } : {}),
+            },
+          },
+        },
+        { new: true, runValidators: true },
+      )
+      .exec();
+
+    if (!updated) {
+      throw new ConflictException(
+        'Workflow state changed concurrently. Please retry the request.',
+      );
+    }
+
+    return { order: updated, changed: true };
+  }
+
   private assertWorkflowStatusWritable(status: OrderStatus): void {
     if (
       status === 'awaiting_payment' ||
@@ -979,6 +1054,7 @@ export class OrdersService {
     orderDto: CreateOrderDto,
     identity: CreateOrderIdentity,
     actorRole?: UserRole,
+    actorId?: string,
     commandFingerprint?: string,
   ): Promise<OrderResponseDto> {
     const normalizedOrder = await this.normalizeOrderForCreate(
@@ -1014,7 +1090,13 @@ export class OrdersService {
           }
         : {}),
       status,
-      statusHistory: [{ status, changedAt: new Date() }],
+      statusHistory: [
+        {
+          status,
+          changedAt: new Date(),
+          ...(actorId ? { changedBy: actorId } : {}),
+        },
+      ],
     });
     createdOrder.orderId = createdOrder._id.toString();
 

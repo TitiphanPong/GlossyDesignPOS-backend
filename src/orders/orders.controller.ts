@@ -123,6 +123,7 @@ export class OrdersController {
       id,
       body.status,
       body.statusNote,
+      request.user,
     );
     await this.auditService.record(
       request.user ?? null,
@@ -163,7 +164,11 @@ export class OrdersController {
     @Body() body: UpdateOrderCustomerDto,
     @Request() request: AuthRequest,
   ): Promise<OrderResponseDto> {
-    const updated = await this.ordersService.updateOrder(id, body);
+    const updated = await this.ordersService.updateOrder(
+      id,
+      body,
+      request.user,
+    );
     await this.auditService.record(request.user ?? null, 'order.update', {
       type: 'order',
       id,

@@ -1,4 +1,8 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
 import { Connection, Model } from 'mongoose';
 import { RunningNumberService } from '../counters/running-number.service';
 import type { OrderDocument, OrderStatus } from './orders.schema';
@@ -16,7 +20,13 @@ type FindByIdAndUpdateArgs = [
 ];
 
 type OrderModelLike = {
+  findById: (id: string) => {
+    exec: () => Promise<unknown>;
+  };
   findByIdAndUpdate: (...args: FindByIdAndUpdateArgs) => {
+    exec: () => Promise<unknown>;
+  };
+  findOneAndUpdate: (...args: unknown[]) => {
     exec: () => Promise<unknown>;
   };
 };
@@ -54,17 +64,23 @@ describe('OrdersService', () => {
     handleOrderStatusChange,
   } as unknown as NotificationsService;
 
+  let findById: jest.MockedFunction<OrderModelLike['findById']>;
   let findByIdAndUpdate: jest.MockedFunction<
     OrderModelLike['findByIdAndUpdate']
   >;
+  let findOneAndUpdate: jest.MockedFunction<OrderModelLike['findOneAndUpdate']>;
   let service: OrdersService;
 
   beforeEach(() => {
     jest.clearAllMocks();
+    findById = jest.fn();
     findByIdAndUpdate = jest.fn();
+    findOneAndUpdate = jest.fn();
 
     const orderModel: OrderModelLike = {
+      findById,
       findByIdAndUpdate,
+      findOneAndUpdate,
     };
 
     service = new OrdersService(
@@ -77,6 +93,48 @@ describe('OrdersService', () => {
       {} as Connection,
     );
   });
+
+  const makeWorkflowOrder = (
+    workflowStatus:
+      | 'pending'
+      | 'producing'
+      | 'ready_for_pickup'
+      | 'delivered'
+      | 'cancelled',
+    financialStatus: OrderStatus = 'partial',
+  ) => {
+    const plain = {
+      orderId: validOrderId,
+      orderNumber: 'GL-20260829-0001',
+      customerName: 'Workflow Customer',
+      phoneNumber: '0812345678',
+      note: '',
+      total: 100,
+      subtotal: 100,
+      discount: 0,
+      depositTotal: 50,
+      paidAmount: 50,
+      remainingTotal: 50,
+      payment: 'cash',
+      paymentMethod: 'cash',
+      status: financialStatus,
+      workflowStatus,
+      taxInvoice: 'no',
+      vatAmount: 0,
+      grandTotal: 100,
+      payments: [],
+      statusHistory: [{ status: workflowStatus, changedAt: new Date() }],
+      cart: [],
+      createdAt: new Date('2026-08-29T00:00:00.000Z'),
+      updatedAt: new Date('2026-08-29T00:00:00.000Z'),
+    };
+    return {
+      _id: { toString: () => validOrderId },
+      workflowStatus,
+      status: financialStatus,
+      toObject: () => plain,
+    } as unknown as OrderDocument;
+  };
 
   it('forwards complete order context to status notifications', () => {
     const response = {
@@ -284,24 +342,39 @@ describe('OrdersService', () => {
     },
   );
 
-  it('advances workflow without overwriting the authoritative financial status', async () => {
-    findByIdAndUpdate.mockReturnValue({
-      exec: jest.fn().mockResolvedValue(null),
+  it('advances exactly one workflow step without overwriting financial status and records actor', async () => {
+    const current = makeWorkflowOrder('pending', 'partial');
+    const updated = makeWorkflowOrder('producing', 'partial');
+    findById.mockReturnValue({
+      exec: jest.fn().mockResolvedValue(current),
+    });
+    findOneAndUpdate.mockReturnValue({
+      exec: jest.fn().mockResolvedValue(updated),
     });
 
-    await expect(
-      service.updateStatus(validOrderId, 'producing'),
-    ).resolves.toBeNull();
-
-    expect(findByIdAndUpdate).toHaveBeenCalledWith(
+    const result = await service.updateStatus(
       validOrderId,
+      'producing',
+      'เริ่มผลิต',
+      { id: 'user-123' },
+    );
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        status: 'partial',
+        workflowStatus: 'producing',
+      }),
+    );
+    expect(findOneAndUpdate).toHaveBeenCalledWith(
+      { _id: validOrderId, workflowStatus: 'pending' },
       {
         $set: { workflowStatus: 'producing' },
         $push: {
           statusHistory: {
             status: 'producing',
-            note: undefined,
+            note: 'เริ่มผลิต',
             changedAt: expect.any(Date) as Date,
+            changedBy: 'user-123',
           },
         },
       },
@@ -309,19 +382,98 @@ describe('OrdersService', () => {
     );
   });
 
-  it('cancellation updates both workflow and top-level cancellation status', async () => {
-    findByIdAndUpdate.mockReturnValue({
+  it.each([
+    ['pending', 'ready_for_pickup'],
+    ['pending', 'delivered'],
+    ['producing', 'pending'],
+    ['ready_for_pickup', 'producing'],
+    ['delivered', 'ready_for_pickup'],
+  ] as const)(
+    'rejects invalid production workflow transition %s -> %s',
+    async (currentStatus, targetStatus) => {
+      findById.mockReturnValue({
+        exec: jest.fn().mockResolvedValue(makeWorkflowOrder(currentStatus)),
+      });
+
+      await expect(
+        service.updateStatus(validOrderId, targetStatus),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(findOneAndUpdate).not.toHaveBeenCalled();
+    },
+  );
+
+  it('treats same-state workflow retry as idempotent without appending history', async () => {
+    const existing = makeWorkflowOrder('producing');
+    findById.mockReturnValue({
+      exec: jest.fn().mockResolvedValue(existing),
+    });
+
+    const result = await service.updateStatus(
+      validOrderId,
+      'producing',
+      'retry',
+      { id: 'user-123' },
+    );
+
+    expect(result).toEqual(
+      expect.objectContaining({ workflowStatus: 'producing' }),
+    );
+    expect(findOneAndUpdate).not.toHaveBeenCalled();
+    expect(findByIdAndUpdate).not.toHaveBeenCalled();
+  });
+
+  it('fails a transition when the atomic current-state predicate loses a race', async () => {
+    findById.mockReturnValue({
+      exec: jest.fn().mockResolvedValue(makeWorkflowOrder('pending')),
+    });
+    findOneAndUpdate.mockReturnValue({
       exec: jest.fn().mockResolvedValue(null),
     });
 
     await expect(
-      service.updateStatus(validOrderId, 'cancelled'),
-    ).resolves.toBeNull();
+      service.updateStatus(validOrderId, 'producing'),
+    ).rejects.toBeInstanceOf(ConflictException);
+  });
 
-    expect(findByIdAndUpdate).toHaveBeenCalledWith(
-      validOrderId,
+  it('uses the same transition guard for generic PATCH with customer fields', async () => {
+    findById.mockReturnValue({
+      exec: jest.fn().mockResolvedValue(makeWorkflowOrder('pending')),
+    });
+
+    await expect(
+      service.updateOrder(
+        validOrderId,
+        { customerName: 'Updated', status: 'ready_for_pickup' },
+        { id: 'user-123' },
+      ),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(findOneAndUpdate).not.toHaveBeenCalled();
+  });
+
+  it('cancellation keeps its existing separate semantics while recording actor', async () => {
+    const current = makeWorkflowOrder('producing', 'partial');
+    const updated = makeWorkflowOrder('cancelled', 'cancelled');
+    findById.mockReturnValue({
+      exec: jest.fn().mockResolvedValue(current),
+    });
+    findOneAndUpdate.mockReturnValue({
+      exec: jest.fn().mockResolvedValue(updated),
+    });
+
+    await service.updateStatus(validOrderId, 'cancelled', undefined, {
+      id: 'user-123',
+    });
+
+    expect(findOneAndUpdate).toHaveBeenCalledWith(
+      { _id: validOrderId, workflowStatus: 'producing' },
       expect.objectContaining({
         $set: { workflowStatus: 'cancelled', status: 'cancelled' },
+        $push: {
+          statusHistory: expect.objectContaining({
+            status: 'cancelled',
+            changedBy: 'user-123',
+          }) as unknown,
+        },
       }),
       { new: true, runValidators: true },
     );

@@ -356,14 +356,18 @@ describe('OrdersController (e2e)', () => {
         expect(body.customerAddress).toBe('88/8 Moo Baan Klang Muang');
       });
 
-    expect(updateOrder).toHaveBeenCalledWith('61a1c287e53a7024d4ab81425', {
-      customerName: 'Sarayut 111',
-      phoneNumber: '0812345678',
-      taxId: '0123456789012',
-      customerTaxId: '0123456789012',
-      address: '88/8 Moo Baan Klang Muang',
-      customerAddress: '88/8 Moo Baan Klang Muang',
-    });
+    expect(updateOrder).toHaveBeenCalledWith(
+      '61a1c287e53a7024d4ab81425',
+      {
+        customerName: 'Sarayut 111',
+        phoneNumber: '0812345678',
+        taxId: '0123456789012',
+        customerTaxId: '0123456789012',
+        address: '88/8 Moo Baan Klang Muang',
+        customerAddress: '88/8 Moo Baan Klang Muang',
+      },
+      undefined,
+    );
   });
 
   it('PATCH /orders/:id returns 404 when order is missing', async () => {
@@ -413,6 +417,7 @@ describe('OrdersController (e2e)', () => {
       '61a1c287e53a7024d4ab81425',
       'producing',
       undefined,
+      undefined,
     );
   });
 
@@ -431,9 +436,13 @@ describe('OrdersController (e2e)', () => {
         expect(body.status).toBe('ready_for_pickup');
       });
 
-    expect(updateOrder).toHaveBeenCalledWith('61a1c287e53a7024d4ab81425', {
-      status: 'ready_for_pickup',
-    });
+    expect(updateOrder).toHaveBeenCalledWith(
+      '61a1c287e53a7024d4ab81425',
+      {
+        status: 'ready_for_pickup',
+      },
+      undefined,
+    );
   });
 
   it('GET /orders returns a bounded paginated list', async () => {
