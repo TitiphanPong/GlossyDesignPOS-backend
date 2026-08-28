@@ -2,6 +2,7 @@ import {
   OrderEntryMode,
   OrderStatus,
   OrderType,
+  OrderWorkflowStatus,
   PaymentMethod,
 } from '../orders.schema';
 
@@ -88,6 +89,7 @@ export class OrderResponseDto {
   payment!: PaymentMethod;
   paymentMethod!: PaymentMethod;
   status!: OrderStatus;
+  workflowStatus!: OrderWorkflowStatus;
   taxInvoice!: 'yes' | 'no';
   vatAmount!: number;
   grandTotal!: number;

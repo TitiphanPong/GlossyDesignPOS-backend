@@ -20,3 +20,7 @@ export class PublicTrackingResponseDto {
   milestones!: PublicTrackingMilestoneDto[];
   updatedAt?: Date;
 }
+
+export class TrackingAccessResponseDto {
+  token!: string;
+}
