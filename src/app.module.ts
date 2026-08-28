@@ -13,6 +13,7 @@ import { AuthModule } from './auth/auth.module';
 import { AuthGuard } from './auth/auth.guard';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { InventoryModule } from './inventory/inventory.module';
 
 @Module({
   imports: [
@@ -35,6 +36,7 @@ import { NotificationsModule } from './notifications/notifications.module';
     QuickProductModule,
     DashboardModule,
     NotificationsModule,
+    InventoryModule,
   ],
   controllers: [HealthController],
   providers: [

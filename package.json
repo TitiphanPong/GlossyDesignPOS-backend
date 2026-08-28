@@ -22,6 +22,7 @@
     "test:mongo:payments": "cross-env RUN_MONGO_INTEGRATION=1 jest orders.payment-mongo.integration.spec.ts --runInBand",
     "test:mongo:tax-invoice": "cross-env RUN_MONGO_INTEGRATION=1 jest orders.tax-invoice-mongo.integration.spec.ts --runInBand",
     "test:mongo:create-idempotency": "cross-env RUN_MONGO_INTEGRATION=1 jest orders.create-idempotency-mongo.integration.spec.ts --runInBand",
+    "test:mongo:inventory": "cross-env RUN_MONGO_INTEGRATION=1 jest inventory.mongo.integration.spec.ts --runInBand",
     "backfill:tax-invoice-books": "node --env-file=.env.development -r ts-node/register scripts/backfill-tax-invoice-books.ts",
     "seed:quick-sale": "node --env-file=.env.development -r ts-node/register scripts/seed-quick-sale.ts",
     "reconcile:orders": "node -r ts-node/register scripts/reconcile-orders.ts"
