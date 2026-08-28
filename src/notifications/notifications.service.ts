@@ -22,6 +22,8 @@ import {
 import { Order } from '../orders/orders.schema';
 import type { OrderDocument, OrderStatus } from '../orders/orders.schema';
 import type { UploadDocument } from '../uploads/schemas/upload.schema';
+import { StockItem } from '../inventory/schemas/stock-item.schema';
+import type { StockItemDocument } from '../inventory/schemas/stock-item.schema';
 
 interface CreateNotificationOptions {
   type: NotificationType;
@@ -35,7 +37,7 @@ interface CreateNotificationOptions {
   amount?: number;
   dueDate?: Date;
   relatedUploadId?: string;
-  entityType?: 'order' | 'upload' | 'payment';
+  entityType?: 'order' | 'upload' | 'payment' | 'stock';
   entityId?: string;
   action?: {
     label: string;
@@ -60,6 +62,7 @@ const ACTION_CENTER_TYPES: readonly NotificationType[] = [
   'order_pickup_delayed',
   'upload_review_required',
   'upload_failed',
+  'low_stock',
 ];
 
 @Injectable()
@@ -69,6 +72,8 @@ export class NotificationsService {
     private readonly notificationModel: Model<NotificationDocument>,
     @InjectModel(Order.name)
     private readonly orderModel: Model<OrderDocument>,
+    @InjectModel(StockItem.name)
+    private readonly stockItemModel: Model<StockItemDocument>,
   ) {}
 
   /**
@@ -78,24 +83,7 @@ export class NotificationsService {
     options: CreateNotificationOptions,
   ): Promise<NotificationResponseDto> {
     const notificationKey = options.notificationKey;
-
-    // Check for existing active notification with same key
-    if (notificationKey) {
-      const existing = await this.notificationModel.findOne({
-        notificationKey,
-        status: 'active',
-      });
-
-      if (existing) {
-        // Update timestamp instead of creating duplicate
-        existing.updatedAt = new Date();
-        await existing.save();
-        return this.toResponseDto(existing);
-      }
-    }
-
-    // Create new notification
-    const notification = new this.notificationModel({
+    const values = {
       type: options.type,
       category: options.category,
       priority: options.priority || 'normal',
@@ -110,10 +98,24 @@ export class NotificationsService {
       entityType: options.entityType,
       entityId: options.entityId,
       action: options.action,
-      notificationKey,
       status: 'active' as NotificationStatus,
-    });
+      isRead: false,
+    };
 
+    if (notificationKey) {
+      const saved = await this.notificationModel.findOneAndUpdate(
+        { notificationKey },
+        {
+          $set: values,
+          $setOnInsert: { notificationKey },
+          $unset: { resolvedAt: 1, dismissedAt: 1 },
+        },
+        { new: true, upsert: true, setDefaultsOnInsert: true },
+      );
+      return this.toResponseDto(saved);
+    }
+
+    const notification = new this.notificationModel(values);
     const saved = await notification.save();
     return this.toResponseDto(saved);
   }
@@ -228,11 +230,54 @@ export class NotificationsService {
     };
   }
 
+  async syncLowStockNotifications(): Promise<void> {
+    const lowStockItems = await this.stockItemModel
+      .find({
+        active: { $ne: false },
+        $expr: { $lte: ['$onHand', '$minimumLevel'] },
+      })
+      .exec();
+
+    const activeKeys: string[] = [];
+    for (const item of lowStockItems) {
+      const itemId = String(item._id);
+      const key = `low_stock:${itemId}`;
+      activeKeys.push(key);
+      await this.createNotification({
+        type: 'low_stock',
+        category: 'action_required',
+        priority: 'high',
+        title: `สต็อกต่ำ ${item.name}`,
+        message: `คงเหลือ ${item.onHand} ${item.unit} · ขั้นต่ำ ${item.minimumLevel} ${item.unit}`,
+        entityType: 'stock',
+        entityId: itemId,
+        notificationKey: key,
+        action: {
+          label: 'เปิดสต็อก',
+          action: 'open_stock',
+        },
+      });
+    }
+
+    await this.notificationModel.updateMany(
+      {
+        type: 'low_stock',
+        status: 'active',
+        ...(activeKeys.length ? { notificationKey: { $nin: activeKeys } } : {}),
+      },
+      {
+        $set: { status: 'resolved', resolvedAt: new Date() },
+      },
+    );
+  }
+
   /**
    * Return the operational action queue and summary from one consistent snapshot.
    * Legacy order-created noise is intentionally excluded from this view.
    */
   async getActionCenter(): Promise<ActionCenterDto> {
+    await this.syncLowStockNotifications();
+
     const notifications = await this.notificationModel
       .find({ status: 'active', type: { $in: ACTION_CENTER_TYPES } })
       .sort({ createdAt: -1 })
