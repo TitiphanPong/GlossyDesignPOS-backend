@@ -1,5 +1,5 @@
 import ExcelJS from 'exceljs';
-import { Model } from 'mongoose';
+import { Model, PipelineStage } from 'mongoose';
 import {
   OrderReportingService,
   OrderReportSummary,
@@ -76,6 +76,24 @@ describe('OrderReportingService', () => {
 
     expect(filter.remainingTotal).toEqual({ $gt: 0 });
     expect(filter.$and).toContainEqual({ status: { $ne: 'cancelled' } });
+  });
+
+  it('excludes cancelled orders from Dashboard payment collections', async () => {
+    const pipelines: PipelineStage[][] = [];
+    const aggregate = jest.fn((pipeline: PipelineStage[]) => {
+      pipelines.push(pipeline);
+      return Promise.resolve([]);
+    });
+    const dashboardService = new OrderReportingService({
+      aggregate,
+    } as unknown as Model<OrderDocument>);
+
+    await dashboardService.getDashboardMetrics({ period: 'today' });
+
+    const receivedPipeline = pipelines[2];
+    expect(receivedPipeline[0]).toEqual({
+      $match: { status: { $ne: 'cancelled' } },
+    });
   });
 
   it('creates a real XLSX with Thai text, leading-zero phone and formula-safe strings', async () => {
