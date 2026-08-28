@@ -14,6 +14,7 @@ export const NOTIFICATION_TYPES = [
   'upload_received',
   'upload_review_required',
   'upload_failed',
+  'low_stock',
 ] as const;
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
 
@@ -99,8 +100,8 @@ export class Notification {
   relatedUploadId?: string;
 
   // Entity reference for deep linking
-  @Prop({ enum: ['order', 'upload', 'payment'], sparse: true })
-  entityType?: 'order' | 'upload' | 'payment';
+  @Prop({ enum: ['order', 'upload', 'payment', 'stock'], sparse: true })
+  entityType?: 'order' | 'upload' | 'payment' | 'stock';
 
   @Prop({ sparse: true })
   entityId?: string;
