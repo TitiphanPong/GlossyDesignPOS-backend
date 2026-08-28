@@ -20,7 +20,7 @@ function makeService(orderModel: Model<OrderDocument>): OrdersService {
 }
 
 describe('OrdersService public tracking lookup', () => {
-  it('uses exact order identity plus phone suffix and returns minimal public fields', async () => {
+  it('uses exact order identity plus phone suffix and returns customer-safe milestones only', async () => {
     const findOne = jest.fn().mockReturnValue({
       exec: jest.fn().mockResolvedValue({
         _id: { toString: () => '61a1c287e53a7024d4ab8142' },
@@ -30,6 +30,23 @@ describe('OrdersService public tracking lookup', () => {
           customerName: 'Must not be exposed',
           phoneNumber: '0812345678',
           status: 'producing',
+          statusHistory: [
+            {
+              status: 'pending',
+              note: 'Internal note must not leak',
+              changedBy: 'internal-user-id',
+              changedAt: new Date('2026-08-27T00:00:00.000Z'),
+            },
+            {
+              status: 'partial',
+              note: 'Financial state is internal',
+              changedAt: new Date('2026-08-27T00:30:00.000Z'),
+            },
+            {
+              status: 'producing',
+              changedAt: new Date('2026-08-27T01:00:00.000Z'),
+            },
+          ],
           total: 999,
           grandTotal: 999,
           cart: [{ name: 'Private job detail' }],
@@ -58,14 +75,66 @@ describe('OrdersService public tracking lookup', () => {
     });
     expect(result).toEqual({
       orderNumber: 'GD-2026-000001',
-      status: 'producing',
-      createdAt: new Date('2026-08-27T00:00:00.000Z'),
+      currentMilestone: 'in_progress',
+      milestones: [
+        {
+          milestone: 'received',
+          reachedAt: new Date('2026-08-27T00:00:00.000Z'),
+        },
+        {
+          milestone: 'in_progress',
+          reachedAt: new Date('2026-08-27T01:00:00.000Z'),
+        },
+      ],
       updatedAt: new Date('2026-08-27T01:00:00.000Z'),
     });
+    expect(result).not.toHaveProperty('status');
     expect(result).not.toHaveProperty('customerName');
     expect(result).not.toHaveProperty('phoneNumber');
     expect(result).not.toHaveProperty('cart');
     expect(result).not.toHaveProperty('grandTotal');
+    expect(result?.milestones.every((entry) => !('note' in entry))).toBe(true);
+    expect(result?.milestones.every((entry) => !('changedBy' in entry))).toBe(
+      true,
+    );
+  });
+
+  it('does not let financial statuses overwrite the latest customer workflow milestone', async () => {
+    const findOne = jest.fn().mockReturnValue({
+      exec: jest.fn().mockResolvedValue({
+        _id: { toString: () => '61a1c287e53a7024d4ab8142' },
+        toObject: () => ({
+          orderNumber: 'GD-2026-000002',
+          phoneNumber: '0812345678',
+          status: 'paid',
+          statusHistory: [
+            {
+              status: 'pending',
+              changedAt: new Date('2026-08-27T00:00:00.000Z'),
+            },
+            {
+              status: 'ready_for_pickup',
+              changedAt: new Date('2026-08-27T02:00:00.000Z'),
+            },
+            {
+              status: 'paid',
+              changedAt: new Date('2026-08-27T03:00:00.000Z'),
+            },
+          ],
+          createdAt: new Date('2026-08-27T00:00:00.000Z'),
+          updatedAt: new Date('2026-08-27T03:00:00.000Z'),
+        }),
+      }),
+    });
+    const service = makeService({ findOne } as unknown as Model<OrderDocument>);
+
+    const result = await service.lookupPublicTracking('GD-2026-000002', '5678');
+
+    expect(result?.currentMilestone).toBe('ready');
+    expect(result?.milestones.map((entry) => entry.milestone)).toEqual([
+      'received',
+      'ready',
+    ]);
   });
 
   it('returns null instead of leaking whether only the order number matched', async () => {

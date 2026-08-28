@@ -13,7 +13,10 @@ import { MongoServerError } from 'mongodb';
 import { Connection, isValidObjectId, Model } from 'mongoose';
 import { RunningNumberService } from '../counters/running-number.service';
 import { OrderResponseDto } from './dto/order-response.dto';
-import { PublicTrackingResponseDto } from './dto/tracking-response.dto';
+import {
+  PublicTrackingMilestone,
+  PublicTrackingResponseDto,
+} from './dto/tracking-response.dto';
 import { UpdateOrderCustomerDto } from './dto/update-order-customer.dto';
 import {
   ExportOrdersQueryDto,
@@ -60,6 +63,16 @@ type ListOrdersResponse = {
 };
 
 const REGEX_SPECIAL_CHARS = /[.*+?^${}()|[\]\\]/g;
+
+const PUBLIC_MILESTONE_BY_STATUS: Partial<
+  Record<OrderStatus, PublicTrackingMilestone>
+> = {
+  pending: 'received',
+  producing: 'in_progress',
+  ready_for_pickup: 'ready',
+  delivered: 'completed',
+  cancelled: 'cancelled',
+};
 
 @Injectable()
 export class OrdersService {
@@ -660,11 +673,46 @@ export class OrdersService {
     if (!order) return null;
 
     const plain = order.toObject() as OrderPlainObject;
+    const milestoneByName = new Map<
+      PublicTrackingMilestone,
+      { milestone: PublicTrackingMilestone; reachedAt?: Date }
+    >();
+
+    const recordMilestone = (status: OrderStatus, reachedAt?: Date): void => {
+      const milestone = PUBLIC_MILESTONE_BY_STATUS[status];
+      if (!milestone || milestoneByName.has(milestone)) return;
+      milestoneByName.set(milestone, { milestone, reachedAt });
+    };
+
+    for (const historyEntry of plain.statusHistory ?? []) {
+      recordMilestone(historyEntry.status, historyEntry.changedAt);
+    }
+
+    if (!milestoneByName.has('received')) {
+      milestoneByName.set('received', {
+        milestone: 'received',
+        reachedAt: plain.createdAt,
+      });
+    }
+
+    const mappedCurrentMilestone = PUBLIC_MILESTONE_BY_STATUS[plain.status];
+    if (mappedCurrentMilestone) {
+      recordMilestone(plain.status, plain.updatedAt ?? plain.createdAt);
+    }
+
+    const milestones = [...milestoneByName.values()].sort((left, right) => {
+      const leftTime = left.reachedAt?.getTime() ?? Number.MAX_SAFE_INTEGER;
+      const rightTime = right.reachedAt?.getTime() ?? Number.MAX_SAFE_INTEGER;
+      return leftTime - rightTime;
+    });
+    const currentMilestone =
+      mappedCurrentMilestone ?? milestones.at(-1)?.milestone ?? 'received';
+
     return {
       orderNumber: plain.orderNumber ?? plain.orderId ?? order._id.toString(),
-      status: plain.status,
-      createdAt: plain.createdAt,
-      updatedAt: plain.updatedAt,
+      currentMilestone,
+      milestones,
+      updatedAt: plain.updatedAt ?? milestones.at(-1)?.reachedAt,
     };
   }
 

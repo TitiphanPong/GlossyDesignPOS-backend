@@ -38,11 +38,20 @@ describe('TrackingController', () => {
     lookupPublicTracking.mockReset();
   });
 
-  it('returns the minimal public tracking response', async () => {
+  it('returns the customer-safe tracking milestone response', async () => {
     lookupPublicTracking.mockResolvedValue({
       orderNumber: 'GD-2026-000001',
-      status: 'ready_for_pickup',
-      createdAt: new Date('2026-08-27T00:00:00.000Z'),
+      currentMilestone: 'ready',
+      milestones: [
+        {
+          milestone: 'received',
+          reachedAt: new Date('2026-08-27T00:00:00.000Z'),
+        },
+        {
+          milestone: 'ready',
+          reachedAt: new Date('2026-08-27T01:00:00.000Z'),
+        },
+      ],
       updatedAt: new Date('2026-08-27T01:00:00.000Z'),
     });
 
@@ -54,9 +63,14 @@ describe('TrackingController', () => {
         expect(body).toEqual(
           expect.objectContaining({
             orderNumber: 'GD-2026-000001',
-            status: 'ready_for_pickup',
+            currentMilestone: 'ready',
+            milestones: [
+              expect.objectContaining({ milestone: 'received' }),
+              expect.objectContaining({ milestone: 'ready' }),
+            ],
           }),
         );
+        expect(body).not.toHaveProperty('status');
         expect(body).not.toHaveProperty('customerName');
         expect(body).not.toHaveProperty('phoneNumber');
         expect(body).not.toHaveProperty('cart');
