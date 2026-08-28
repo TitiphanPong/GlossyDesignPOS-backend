@@ -24,6 +24,14 @@ export type CreateStockItemCommand = {
   minimumLevel?: number;
 };
 
+export type UpdateStockItemCommand = {
+  code?: string;
+  name?: string;
+  unit?: string;
+  minimumLevel?: number;
+  active?: boolean;
+};
+
 export type RecordStockMovementCommand = {
   type: StockMovementType;
   quantity: number;
@@ -80,6 +88,85 @@ export class InventoryService {
       if (this.isDuplicateKey(error)) {
         throw new ConflictException(
           `Stock item code "${code}" already exists.`,
+        );
+      }
+      throw error;
+    }
+  }
+
+  async listStockItems(
+    q?: string,
+    includeInactive = false,
+  ): Promise<StockItemDocument[]> {
+    const filter: Record<string, unknown> = {};
+    if (!includeInactive) filter.active = { $ne: false };
+    const search = q?.trim();
+    if (search) {
+      const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      filter.$or = [
+        { code: { $regex: escaped, $options: 'i' } },
+        { name: { $regex: escaped, $options: 'i' } },
+        { unit: { $regex: escaped, $options: 'i' } },
+      ];
+    }
+    return this.stockItemModel
+      .find(filter)
+      .sort({ active: -1, name: 1 })
+      .exec();
+  }
+
+  async getStockItem(id: string): Promise<StockItemDocument> {
+    this.assertObjectId(id);
+    const item = await this.stockItemModel.findById(id).exec();
+    if (!item) throw new NotFoundException(`Stock item "${id}" not found.`);
+    return item;
+  }
+
+  async updateStockItem(
+    id: string,
+    command: UpdateStockItemCommand,
+  ): Promise<StockItemDocument> {
+    this.assertObjectId(id);
+    const update: Record<string, unknown> = {};
+    if (command.code !== undefined)
+      update.code = command.code.trim().toUpperCase();
+    if (command.name !== undefined) update.name = command.name.trim();
+    if (command.unit !== undefined) update.unit = command.unit.trim();
+    if (command.minimumLevel !== undefined)
+      update.minimumLevel = command.minimumLevel;
+    if (command.active !== undefined) update.active = command.active;
+
+    if ('code' in update && !update.code)
+      throw new BadRequestException('Stock code is required.');
+    if ('name' in update && !update.name)
+      throw new BadRequestException('Stock name is required.');
+    if ('unit' in update && !update.unit)
+      throw new BadRequestException('Stock unit is required.');
+    if (
+      command.minimumLevel !== undefined &&
+      (!Number.isFinite(command.minimumLevel) || command.minimumLevel < 0)
+    ) {
+      throw new BadRequestException(
+        'Minimum stock level must be zero or greater.',
+      );
+    }
+
+    try {
+      const item = await this.stockItemModel
+        .findByIdAndUpdate(
+          id,
+          { $set: update },
+          { new: true, runValidators: true },
+        )
+        .exec();
+      if (!item) throw new NotFoundException(`Stock item "${id}" not found.`);
+      return item;
+    } catch (error) {
+      if (this.isDuplicateKey(error)) {
+        const duplicateCode =
+          typeof update.code === 'string' ? update.code : '';
+        throw new ConflictException(
+          `Stock item code "${duplicateCode}" already exists.`,
         );
       }
       throw error;
