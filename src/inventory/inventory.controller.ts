@@ -15,6 +15,7 @@ import { AuthenticatedUser } from '../auth/auth.types';
 import {
   CreateStockItemDto,
   ListStockItemsQueryDto,
+  ListStockMovementsQueryDto,
   RecordStockMovementDto,
   UpdateStockItemDto,
 } from './dto/inventory.dto';
@@ -35,6 +36,16 @@ export class InventoryController {
       query.q,
       query.includeInactive === 'true',
     );
+  }
+
+  @Get('overview')
+  getOverview() {
+    return this.inventoryService.getStockOverview();
+  }
+
+  @Get('movements')
+  listMovements(@Query() query: ListStockMovementsQueryDto) {
+    return this.inventoryService.listStockMovements(query);
   }
 
   @Get('items/:id')

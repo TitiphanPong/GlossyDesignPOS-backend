@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { createHash } from 'node:crypto';
-import { Connection, isValidObjectId, Model } from 'mongoose';
+import { Connection, isValidObjectId, Model, Types } from 'mongoose';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { StockItem, StockItemDocument } from './schemas/stock-item.schema';
 import {
@@ -41,6 +41,16 @@ export type RecordStockMovementCommand = {
     type: string;
     id: string;
   };
+};
+
+export type ListStockMovementsQuery = {
+  page?: number;
+  limit?: number;
+  itemId?: string;
+  type?: StockMovementType;
+  from?: string;
+  to?: string;
+  q?: string;
 };
 
 const INBOUND_MOVEMENT_TYPES = new Set<StockMovementType>([
@@ -113,6 +123,131 @@ export class InventoryService {
       .find(filter)
       .sort({ active: -1, name: 1 })
       .exec();
+  }
+
+  async getStockOverview() {
+    const [activeItems, recentMovements] = await Promise.all([
+      this.stockItemModel
+        .find({ active: { $ne: false } })
+        .sort({ name: 1 })
+        .lean()
+        .exec(),
+      this.stockMovementModel
+        .find({})
+        .sort({ occurredAt: -1, _id: -1 })
+        .limit(20)
+        .lean()
+        .exec(),
+    ]);
+
+    const itemIds = [
+      ...new Set(
+        recentMovements.map((movement) => String(movement.stockItemId)),
+      ),
+    ];
+    const movedItems = itemIds.length
+      ? await this.stockItemModel
+          .find({ _id: { $in: itemIds.map((id) => new Types.ObjectId(id)) } })
+          .lean()
+          .exec()
+      : [];
+    const itemById = new Map(
+      movedItems.map((item) => [String(item._id), item]),
+    );
+    const recentlyMovedItems = itemIds.slice(0, 5).flatMap((id) => {
+      const item = itemById.get(id);
+      if (!item) return [];
+      const movement = recentMovements.find(
+        (entry) => String(entry.stockItemId) === id,
+      );
+      return [
+        {
+          item,
+          lastMovementAt: movement?.occurredAt ?? null,
+          lastMovementType: movement?.type ?? null,
+        },
+      ];
+    });
+
+    return {
+      totalActiveItems: activeItems.length,
+      lowStockCount: activeItems.filter(
+        (item) => item.onHand <= item.minimumLevel,
+      ).length,
+      recentlyMovedItems,
+    };
+  }
+
+  async listStockMovements(query: ListStockMovementsQuery) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 25;
+    const filter: Record<string, unknown> = {};
+
+    if (query.itemId) {
+      this.assertObjectId(query.itemId);
+      filter.stockItemId = new Types.ObjectId(query.itemId);
+    }
+    if (query.type) filter.type = query.type;
+
+    if (query.from || query.to) {
+      const occurredAt: Record<string, Date> = {};
+      if (query.from) occurredAt.$gte = new Date(query.from);
+      if (query.to) occurredAt.$lte = new Date(query.to);
+      filter.occurredAt = occurredAt;
+    }
+
+    const search = query.q?.trim();
+    if (search) {
+      const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = { $regex: escaped, $options: 'i' };
+      const matchingItems = await this.stockItemModel
+        .find({ $or: [{ code: regex }, { name: regex }, { unit: regex }] })
+        .select({ _id: 1 })
+        .lean()
+        .exec();
+      filter.$or = [
+        { reason: regex },
+        { actorUsername: regex },
+        { referenceType: regex },
+        { referenceId: regex },
+        { stockItemId: { $in: matchingItems.map((item) => item._id) } },
+      ];
+    }
+
+    const [total, movements] = await Promise.all([
+      this.stockMovementModel.countDocuments(filter).exec(),
+      this.stockMovementModel
+        .find(filter)
+        .sort({ occurredAt: -1, _id: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean()
+        .exec(),
+    ]);
+
+    const movementItemIds = [
+      ...new Set(movements.map((movement) => String(movement.stockItemId))),
+    ];
+    const items = movementItemIds.length
+      ? await this.stockItemModel
+          .find({
+            _id: { $in: movementItemIds.map((id) => new Types.ObjectId(id)) },
+          })
+          .lean()
+          .exec()
+      : [];
+    const itemById = new Map(items.map((item) => [String(item._id), item]));
+
+    return {
+      items: movements.map((movement) => ({
+        ...movement,
+        stockItem: itemById.get(String(movement.stockItemId)) ?? null,
+      })),
+      page,
+      limit,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+    };
   }
 
   async getStockItem(id: string): Promise<StockItemDocument> {

@@ -165,4 +165,73 @@ describe('InventoryService', () => {
       ),
     ).rejects.toThrow(ConflictException);
   });
+
+  it('counts filtered movement history before applying server pagination', async () => {
+    const countExec = jest.fn().mockResolvedValue(51);
+    const countDocuments = jest.fn().mockReturnValue({ exec: countExec });
+    const movement = {
+      _id: '64b000000000000000000003',
+      stockItemId,
+      type: 'issue',
+      occurredAt: new Date('2026-08-28T05:00:00.000Z'),
+    };
+    const movementExec = jest.fn().mockResolvedValue([movement]);
+    const limit = jest.fn().mockReturnValue({
+      lean: jest.fn().mockReturnValue({ exec: movementExec }),
+    });
+    const skip = jest.fn().mockReturnValue({ limit });
+    const sort = jest.fn().mockReturnValue({ skip });
+    const findMovements = jest.fn().mockReturnValue({ sort });
+
+    const item = {
+      _id: stockItemId,
+      code: 'PAPER-A4',
+      name: 'A4 paper',
+      unit: 'ream',
+    };
+    const itemExec = jest.fn().mockResolvedValue([item]);
+    const findItems = jest
+      .fn()
+      .mockReturnValue({ lean: jest.fn().mockReturnValue({ exec: itemExec }) });
+
+    const service = new InventoryService(
+      { find: findItems } as unknown as Model<StockItemDocument>,
+      {
+        countDocuments,
+        find: findMovements,
+      } as unknown as Model<StockMovementDocument>,
+      {} as Connection,
+    );
+
+    const result = await service.listStockMovements({
+      page: 2,
+      limit: 25,
+      itemId: stockItemId,
+      type: 'issue',
+      from: '2026-08-01T00:00:00.000Z',
+      to: '2026-08-31T23:59:59.999Z',
+    });
+
+    expect(countDocuments).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'issue',
+        occurredAt: {
+          $gte: new Date('2026-08-01T00:00:00.000Z'),
+          $lte: new Date('2026-08-31T23:59:59.999Z'),
+        },
+      }),
+    );
+    expect(skip).toHaveBeenCalledWith(25);
+    expect(limit).toHaveBeenCalledWith(25);
+    expect(result).toMatchObject({
+      page: 2,
+      limit: 25,
+      total: 51,
+      totalPages: 3,
+    });
+    expect(result.items[0]?.stockItem).toMatchObject({
+      code: 'PAPER-A4',
+      unit: 'ream',
+    });
+  });
 });
