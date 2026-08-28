@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { Connection, Model } from 'mongoose';
 import { RunningNumberService } from '../counters/running-number.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -135,6 +136,59 @@ describe('OrdersService public tracking lookup', () => {
       'received',
       'ready',
     ]);
+  });
+
+  it('looks up secure tracking access by token hash and returns only public milestones', async () => {
+    const token = 'A'.repeat(43);
+    const tokenHash = createHash('sha256').update(token).digest('hex');
+    const findOne = jest.fn().mockReturnValue({
+      exec: jest.fn().mockResolvedValue({
+        _id: { toString: () => '61a1c287e53a7024d4ab8142' },
+        toObject: () => ({
+          orderNumber: 'GD-2026-000003',
+          phoneNumber: '',
+          status: 'paid',
+          workflowStatus: 'producing',
+          statusHistory: [
+            {
+              status: 'pending',
+              changedAt: new Date('2026-08-27T00:00:00.000Z'),
+            },
+            {
+              status: 'producing',
+              changedAt: new Date('2026-08-27T01:00:00.000Z'),
+            },
+          ],
+          grandTotal: 999,
+          createdAt: new Date('2026-08-27T00:00:00.000Z'),
+          updatedAt: new Date('2026-08-27T03:00:00.000Z'),
+        }),
+      }),
+    });
+    const service = makeService({ findOne } as unknown as Model<OrderDocument>);
+
+    const result = await service.lookupPublicTrackingByToken(token);
+
+    expect(findOne).toHaveBeenCalledWith({
+      trackingAccessTokenHash: tokenHash,
+    });
+    expect(result).toEqual({
+      orderNumber: 'GD-2026-000003',
+      currentMilestone: 'in_progress',
+      milestones: [
+        {
+          milestone: 'received',
+          reachedAt: new Date('2026-08-27T00:00:00.000Z'),
+        },
+        {
+          milestone: 'in_progress',
+          reachedAt: new Date('2026-08-27T01:00:00.000Z'),
+        },
+      ],
+      updatedAt: new Date('2026-08-27T01:00:00.000Z'),
+    });
+    expect(result).not.toHaveProperty('phoneNumber');
+    expect(result).not.toHaveProperty('grandTotal');
   });
 
   it('returns null instead of leaking whether only the order number matched', async () => {

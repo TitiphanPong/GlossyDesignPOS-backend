@@ -18,6 +18,7 @@ import { Observable } from 'rxjs';
 import { OrdersService } from './orders.service';
 import { CustomerSseMessage, OrdersSseService } from './orders.sse.service';
 import { OrderResponseDto } from './dto/order-response.dto';
+import { TrackingAccessResponseDto } from './dto/tracking-response.dto';
 import { UpdateOrderCustomerDto } from './dto/update-order-customer.dto';
 import {
   AddPaymentDto,
@@ -130,6 +131,20 @@ export class OrdersController {
       { status: body.status },
     );
     return updated;
+  }
+
+  @Post(':id/tracking-access')
+  async getTrackingAccess(
+    @Param('id') id: string,
+    @Request() request: AuthRequest,
+  ): Promise<TrackingAccessResponseDto> {
+    const access = await this.ordersService.getOrCreateTrackingAccessToken(id);
+    await this.auditService.record(
+      request.user ?? null,
+      'order.tracking_access.issue',
+      { type: 'order', id },
+    );
+    return access;
   }
 
   @Get('by-order-id/:orderId')

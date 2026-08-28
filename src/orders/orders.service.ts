@@ -8,7 +8,7 @@ import {
   Optional,
 } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { MongoServerError } from 'mongodb';
 import { Connection, isValidObjectId, Model } from 'mongoose';
 import { RunningNumberService } from '../counters/running-number.service';
@@ -23,9 +23,11 @@ import {
   ListOrdersQueryDto,
 } from './dto/list-orders-query.dto';
 import {
+  ORDER_WORKFLOW_STATUSES,
   Order,
   OrderDocument,
   OrderStatus,
+  OrderWorkflowStatus,
   PaymentMethod,
 } from './orders.schema';
 import { OrdersSseService } from './orders.sse.service';
@@ -186,14 +188,18 @@ export class OrdersService {
   ): Promise<OrderResponseDto | null> {
     this.assertWorkflowStatusWritable(status);
     this.assertMongoObjectId(id, 'order id');
+    const workflowStatus = status as OrderWorkflowStatus;
     const updated = await this.orderModel
       .findByIdAndUpdate(
         id,
         {
-          $set: { status },
+          $set: {
+            workflowStatus,
+            ...(workflowStatus === 'cancelled' ? { status: 'cancelled' } : {}),
+          },
           $push: {
             statusHistory: {
-              status,
+              status: workflowStatus,
               note: statusNote,
               changedAt: new Date(),
             },
@@ -207,7 +213,7 @@ export class OrdersService {
 
     const response = this.toOrderResponse(updated);
 
-    this.emitForStatus(response, status);
+    this.emitForStatus(response, workflowStatus);
 
     return response;
   }
@@ -243,7 +249,11 @@ export class OrdersService {
     }
 
     if (status !== undefined) {
-      update.status = status;
+      const workflowStatus = status as OrderWorkflowStatus;
+      update.workflowStatus = workflowStatus;
+      if (workflowStatus === 'cancelled') {
+        update.status = 'cancelled';
+      }
     }
 
     if (!Object.keys(update).length) {
@@ -651,6 +661,71 @@ export class OrdersService {
     );
   }
 
+  async getOrCreateTrackingAccessToken(id: string): Promise<{ token: string }> {
+    this.assertMongoObjectId(id, 'order id');
+
+    const existing = await this.orderModel
+      .findById(id)
+      .select('+trackingAccessToken +trackingAccessTokenHash')
+      .exec();
+    if (!existing) {
+      throw new NotFoundException(`Order not found for id "${id}".`);
+    }
+
+    if (existing.trackingAccessToken) {
+      const expectedHash = this.hashTrackingAccessToken(
+        existing.trackingAccessToken,
+      );
+      if (existing.trackingAccessTokenHash !== expectedHash) {
+        await this.orderModel
+          .findByIdAndUpdate(id, {
+            $set: { trackingAccessTokenHash: expectedHash },
+          })
+          .exec();
+      }
+      return { token: existing.trackingAccessToken };
+    }
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const token = randomBytes(32).toString('base64url');
+      const trackingAccessTokenHash = this.hashTrackingAccessToken(token);
+
+      try {
+        const updated = await this.orderModel
+          .findOneAndUpdate(
+            { _id: id, trackingAccessToken: { $exists: false } },
+            {
+              $set: {
+                trackingAccessToken: token,
+                trackingAccessTokenHash,
+              },
+            },
+            { new: true, runValidators: true },
+          )
+          .select('+trackingAccessToken')
+          .exec();
+
+        if (updated?.trackingAccessToken) {
+          return { token: updated.trackingAccessToken };
+        }
+      } catch (error) {
+        if (!this.isDuplicateKeyError(error)) throw error;
+      }
+
+      const raced = await this.orderModel
+        .findById(id)
+        .select('+trackingAccessToken')
+        .exec();
+      if (raced?.trackingAccessToken) {
+        return { token: raced.trackingAccessToken };
+      }
+    }
+
+    throw new InternalServerErrorException(
+      'Failed to create tracking access for order.',
+    );
+  }
+
   async lookupPublicTracking(
     orderNumber: string,
     phoneSuffix: string,
@@ -670,8 +745,24 @@ export class OrdersService {
         ],
       })
       .exec();
-    if (!order) return null;
+    return order ? this.buildPublicTrackingResponse(order) : null;
+  }
 
+  async lookupPublicTrackingByToken(
+    token: string,
+  ): Promise<PublicTrackingResponseDto | null> {
+    const normalizedToken = token.trim();
+    const order = await this.orderModel
+      .findOne({
+        trackingAccessTokenHash: this.hashTrackingAccessToken(normalizedToken),
+      })
+      .exec();
+    return order ? this.buildPublicTrackingResponse(order) : null;
+  }
+
+  private buildPublicTrackingResponse(
+    order: OrderDocument,
+  ): PublicTrackingResponseDto {
     const plain = order.toObject() as OrderPlainObject;
     const milestoneByName = new Map<
       PublicTrackingMilestone,
@@ -695,10 +786,8 @@ export class OrdersService {
       });
     }
 
-    const mappedCurrentMilestone = PUBLIC_MILESTONE_BY_STATUS[plain.status];
-    if (mappedCurrentMilestone) {
-      recordMilestone(plain.status, plain.updatedAt ?? plain.createdAt);
-    }
+    const workflowStatus = this.resolveWorkflowStatus(plain);
+    recordMilestone(workflowStatus, plain.updatedAt ?? plain.createdAt);
 
     const milestones = [...milestoneByName.values()].sort((left, right) => {
       const leftTime = left.reachedAt?.getTime() ?? Number.MAX_SAFE_INTEGER;
@@ -706,14 +795,38 @@ export class OrdersService {
       return leftTime - rightTime;
     });
     const currentMilestone =
-      mappedCurrentMilestone ?? milestones.at(-1)?.milestone ?? 'received';
+      PUBLIC_MILESTONE_BY_STATUS[workflowStatus] ?? 'received';
 
     return {
       orderNumber: plain.orderNumber ?? plain.orderId ?? order._id.toString(),
       currentMilestone,
       milestones,
-      updatedAt: plain.updatedAt ?? milestones.at(-1)?.reachedAt,
+      updatedAt: milestones.at(-1)?.reachedAt ?? plain.updatedAt,
     };
+  }
+
+  private resolveWorkflowStatus(plain: OrderPlainObject): OrderWorkflowStatus {
+    if (plain.workflowStatus && this.isWorkflowStatus(plain.workflowStatus)) {
+      return plain.workflowStatus;
+    }
+
+    const history = plain.statusHistory ?? [];
+    for (let index = history.length - 1; index >= 0; index -= 1) {
+      const historicalStatus = history[index]?.status;
+      if (historicalStatus && this.isWorkflowStatus(historicalStatus)) {
+        return historicalStatus;
+      }
+    }
+
+    return this.isWorkflowStatus(plain.status) ? plain.status : 'pending';
+  }
+
+  private isWorkflowStatus(status: OrderStatus): status is OrderWorkflowStatus {
+    return ORDER_WORKFLOW_STATUSES.includes(status as OrderWorkflowStatus);
+  }
+
+  private hashTrackingAccessToken(token: string): string {
+    return createHash('sha256').update(token).digest('hex');
   }
 
   async updateCustomerInfo(
@@ -1204,6 +1317,7 @@ export class OrdersService {
       payment,
       paymentMethod: payment,
       status: money.status,
+      workflowStatus: 'pending',
       saleDate,
       entryMode,
       isBackdated: entryMode === 'backdated',
@@ -1306,6 +1420,7 @@ export class OrdersService {
       payment: plain.payment,
       paymentMethod: plain.paymentMethod ?? plain.payment,
       status: plain.status,
+      workflowStatus: this.resolveWorkflowStatus(plain),
       taxInvoice: plain.taxInvoice,
       vatAmount: plain.vatAmount,
       grandTotal: plain.grandTotal,

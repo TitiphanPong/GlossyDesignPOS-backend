@@ -10,3 +10,9 @@ export class TrackingLookupDto {
   @Matches(/^\d{4}$/)
   phoneSuffix!: string;
 }
+
+export class TrackingTokenLookupDto {
+  @IsString()
+  @Matches(/^[A-Za-z0-9_-]{43}$/)
+  token!: string;
+}

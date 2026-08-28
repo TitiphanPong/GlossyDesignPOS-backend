@@ -7,6 +7,7 @@ import { TrackingController } from './tracking.controller';
 describe('TrackingController', () => {
   let app: INestApplication;
   const lookupPublicTracking = jest.fn();
+  const lookupPublicTrackingByToken = jest.fn();
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
@@ -14,7 +15,7 @@ describe('TrackingController', () => {
       providers: [
         {
           provide: OrdersService,
-          useValue: { lookupPublicTracking },
+          useValue: { lookupPublicTracking, lookupPublicTrackingByToken },
         },
       ],
     }).compile();
@@ -36,6 +37,7 @@ describe('TrackingController', () => {
 
   beforeEach(() => {
     lookupPublicTracking.mockReset();
+    lookupPublicTrackingByToken.mockReset();
   });
 
   it('returns the customer-safe tracking milestone response', async () => {
@@ -96,5 +98,40 @@ describe('TrackingController', () => {
       .post('/tracking/lookup')
       .send({ orderNumber: 'GD-2026-000001', phoneSuffix: '9999' })
       .expect(404);
+  });
+
+  it('accepts a secure opaque token and returns the same customer-safe contract', async () => {
+    const token = 'A'.repeat(43);
+    lookupPublicTrackingByToken.mockResolvedValue({
+      orderNumber: 'GD-2026-000001',
+      currentMilestone: 'in_progress',
+      milestones: [{ milestone: 'received' }, { milestone: 'in_progress' }],
+    });
+
+    await request(app.getHttpServer() as Parameters<typeof request>[0])
+      .post('/tracking/token')
+      .send({ token })
+      .expect(201)
+      .expect(({ body }: { body: Record<string, unknown> }) => {
+        expect(body).toEqual(
+          expect.objectContaining({
+            orderNumber: 'GD-2026-000001',
+            currentMilestone: 'in_progress',
+          }),
+        );
+        expect(body).not.toHaveProperty('phoneNumber');
+        expect(body).not.toHaveProperty('grandTotal');
+      });
+
+    expect(lookupPublicTrackingByToken).toHaveBeenCalledWith(token);
+  });
+
+  it('rejects malformed tracking tokens before service lookup', async () => {
+    await request(app.getHttpServer() as Parameters<typeof request>[0])
+      .post('/tracking/token')
+      .send({ token: 'too-short' })
+      .expect(400);
+
+    expect(lookupPublicTrackingByToken).not.toHaveBeenCalled();
   });
 });

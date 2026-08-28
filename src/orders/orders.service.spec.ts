@@ -284,6 +284,49 @@ describe('OrdersService', () => {
     },
   );
 
+  it('advances workflow without overwriting the authoritative financial status', async () => {
+    findByIdAndUpdate.mockReturnValue({
+      exec: jest.fn().mockResolvedValue(null),
+    });
+
+    await expect(
+      service.updateStatus(validOrderId, 'producing'),
+    ).resolves.toBeNull();
+
+    expect(findByIdAndUpdate).toHaveBeenCalledWith(
+      validOrderId,
+      {
+        $set: { workflowStatus: 'producing' },
+        $push: {
+          statusHistory: {
+            status: 'producing',
+            note: undefined,
+            changedAt: expect.any(Date) as Date,
+          },
+        },
+      },
+      { new: true, runValidators: true },
+    );
+  });
+
+  it('cancellation updates both workflow and top-level cancellation status', async () => {
+    findByIdAndUpdate.mockReturnValue({
+      exec: jest.fn().mockResolvedValue(null),
+    });
+
+    await expect(
+      service.updateStatus(validOrderId, 'cancelled'),
+    ).resolves.toBeNull();
+
+    expect(findByIdAndUpdate).toHaveBeenCalledWith(
+      validOrderId,
+      expect.objectContaining({
+        $set: { workflowStatus: 'cancelled', status: 'cancelled' },
+      }),
+      { new: true, runValidators: true },
+    );
+  });
+
   it.each(['awaiting_payment', 'partial', 'paid'] as const)(
     'rejects generic PATCH bypass to financial status %s when customer fields are also present',
     async (status) => {

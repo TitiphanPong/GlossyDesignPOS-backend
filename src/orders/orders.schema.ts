@@ -14,6 +14,14 @@ export const ORDER_STATUSES = [
   'paid',
 ] as const;
 export type OrderStatus = (typeof ORDER_STATUSES)[number];
+export const ORDER_WORKFLOW_STATUSES = [
+  'pending',
+  'producing',
+  'ready_for_pickup',
+  'delivered',
+  'cancelled',
+] as const;
+export type OrderWorkflowStatus = (typeof ORDER_WORKFLOW_STATUSES)[number];
 export type OrderDocument = HydratedDocument<Order>;
 export const ORDER_TYPES = ['NORMAL', 'QUICK_SALE'] as const;
 export type OrderType = (typeof ORDER_TYPES)[number];
@@ -51,6 +59,18 @@ export class Order {
 
   @Prop({ unique: true, sparse: true })
   orderNumber?: string;
+
+  @Prop({ select: false, maxlength: 64 })
+  trackingAccessToken?: string;
+
+  @Prop({
+    select: false,
+    unique: true,
+    sparse: true,
+    index: true,
+    match: /^[a-f0-9]{64}$/,
+  })
+  trackingAccessTokenHash?: string;
 
   @Prop({ unique: true, sparse: true })
   invoiceNumber?: string;
@@ -154,6 +174,9 @@ export class Order {
     default: 'pending',
   })
   status!: OrderStatus;
+
+  @Prop({ type: String, enum: ORDER_WORKFLOW_STATUSES, index: true })
+  workflowStatus?: OrderWorkflowStatus;
 
   @Prop({ type: String, enum: ['yes', 'no'], default: 'no' })
   taxInvoice!: 'yes' | 'no';
@@ -309,6 +332,7 @@ export class Order {
 export const OrderSchema = SchemaFactory.createForClass(Order);
 
 OrderSchema.index({ status: 1, createdAt: -1 });
+OrderSchema.index({ workflowStatus: 1, createdAt: -1 });
 OrderSchema.index({ orderType: 1, createdAt: -1 });
 OrderSchema.index({ createdAt: -1 });
 OrderSchema.index({ saleDate: 1, status: 1 });
