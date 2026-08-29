@@ -51,8 +51,9 @@ describe('customer Excel import preparation', () => {
 
     expect(result.sourceRows).toBe(2);
     expect(result.reviewRows).toEqual([3]);
-    expect(result.readyRows).toHaveLength(1);
-    expect(result.readyRows[0].document).toEqual(
+    expect(result.includedReviewRows).toEqual([]);
+    expect(result.importRows).toHaveLength(1);
+    expect(result.importRows[0].document).toEqual(
       expect.objectContaining({
         displayName: 'บริษัท ทดสอบ จำกัด',
         phoneNumber: '02-7385801',
@@ -61,7 +62,27 @@ describe('customer Excel import preparation', () => {
         active: true,
       }),
     );
-    expect(result.readyRows[0].document).not.toHaveProperty('email');
+    expect(result.importRows[0].document).not.toHaveProperty('email');
+  });
+
+  it('can include review rows while leaving invalid or missing tax IDs blank', () => {
+    const result = prepareCustomerRows(
+      [
+        header,
+        row(2, {
+          A: 'ลูกค้ารอตรวจสอบ',
+          B: '0000000000000',
+          D: '1 ถนนทดสอบ',
+          G: 'ตรวจสอบ',
+        }),
+      ],
+      { includeReview: true },
+    );
+
+    expect(result.reviewRows).toEqual([2]);
+    expect(result.includedReviewRows).toEqual([2]);
+    expect(result.importRows).toHaveLength(1);
+    expect(result.importRows[0].document).not.toHaveProperty('taxId');
   });
 
   it('uses tax ID, branch, and address as the stable import identity', () => {

@@ -45,9 +45,10 @@ function requireArgument(name: string): string {
 function normalizedExistingIdentity(
   customer: ExistingCustomer,
 ): string | undefined {
-  if (!customer.taxId) return undefined;
+  if (!customer.taxId && !customer.displayName) return undefined;
   return customerIdentityKey({
     taxId: customer.taxId,
+    displayName: customer.displayName,
     branchType: customer.branchType,
     address: customer.address,
   });
@@ -125,7 +126,8 @@ async function importCustomers(client: MongoClient): Promise<void> {
   const backupDirectory = path.resolve(
     argumentValue('--backup-dir') ?? path.join(process.cwd(), '..', 'backups'),
   );
-  const workbook = await loadCustomerWorkbook(sourcePath);
+  const includeReview = process.argv.includes('--include-review');
+  const workbook = await loadCustomerWorkbook(sourcePath, { includeReview });
   const database = client.db();
   const customers = database.collection<ExistingCustomer>('customers');
   const existingCustomers = await customers.find({}).toArray();
@@ -139,7 +141,7 @@ async function importCustomers(client: MongoClient): Promise<void> {
   }
 
   const skippedExisting: number[] = [];
-  const rowsToInsert = workbook.readyRows.filter((row) => {
+  const rowsToInsert = workbook.importRows.filter((row) => {
     if (existingByIdentity.has(row.identityKey)) {
       skippedExisting.push(row.sourceRow);
       return false;
@@ -159,8 +161,11 @@ async function importCustomers(client: MongoClient): Promise<void> {
     sourceFile: path.basename(sourcePath),
     sourceSha256: workbook.sourceSha256,
     sourceRows: workbook.sourceRows,
-    readyRows: workbook.readyRows.length,
-    reviewRowsSkipped: workbook.reviewRows.length,
+    readyRows: workbook.sourceRows - workbook.reviewRows.length,
+    reviewRows: workbook.reviewRows.length,
+    reviewRowsIncluded: workbook.includedReviewRows.length,
+    reviewRowsSkipped:
+      workbook.reviewRows.length - workbook.includedReviewRows.length,
     existingRowsSkipped: skippedExisting.length,
     customersToInsert: rowsToInsert.length,
     customersWithMultiplePhones: rowsToInsert.filter(
@@ -229,7 +234,9 @@ async function importCustomers(client: MongoClient): Promise<void> {
             sourceFile: path.basename(sourcePath),
             sourceSha256: workbook.sourceSha256,
             insertedCustomers: documents.length,
-            skippedReviewRows: workbook.reviewRows.length,
+            includedReviewRows: workbook.includedReviewRows.length,
+            skippedReviewRows:
+              workbook.reviewRows.length - workbook.includedReviewRows.length,
             skippedExistingRows: skippedExisting.length,
           },
           createdAt: new Date(),

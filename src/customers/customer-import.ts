@@ -25,7 +25,7 @@ export type CustomerImportDocument = {
   phoneNumber?: string;
   phoneNumbers: string[];
   email?: string;
-  taxId: string;
+  taxId?: string;
   companyName: string;
   address?: string;
   branchType?: string;
@@ -41,8 +41,9 @@ export type PreparedCustomerImportRow = {
 export type CustomerWorkbookImport = {
   sourceSha256: string;
   sourceRows: number;
-  readyRows: PreparedCustomerImportRow[];
+  importRows: PreparedCustomerImportRow[];
   reviewRows: number[];
+  includedReviewRows: number[];
 };
 
 const xmlParser = new XMLParser({
@@ -107,11 +108,20 @@ export function isValidThaiTaxId(value: string): boolean {
 }
 
 export function customerIdentityKey(input: {
-  taxId: string;
+  taxId?: string;
+  displayName?: string;
   branchType?: string;
   address?: string;
 }): string {
-  return [input.taxId, input.branchType ?? '', input.address ?? '']
+  const identityParts = input.taxId
+    ? [input.taxId, input.branchType ?? '', input.address ?? '']
+    : [
+        'NO_TAX',
+        input.displayName ?? '',
+        input.branchType ?? '',
+        input.address ?? '',
+      ];
+  return identityParts
     .map((value) => normalizeWhitespace(value).toLocaleLowerCase('th-TH'))
     .join('|');
 }
@@ -182,13 +192,18 @@ function validateHeaders(row: Map<string, string>): void {
 
 export function prepareCustomerRows(
   rows: Map<string, string>[],
-): Pick<CustomerWorkbookImport, 'sourceRows' | 'readyRows' | 'reviewRows'> {
+  options: { includeReview?: boolean } = {},
+): Pick<
+  CustomerWorkbookImport,
+  'sourceRows' | 'importRows' | 'reviewRows' | 'includedReviewRows'
+> {
   const [header, ...dataRows] = rows;
   if (!header) throw new TypeError('Customer Master is empty.');
   validateHeaders(header);
 
-  const readyRows: PreparedCustomerImportRow[] = [];
+  const importRows: PreparedCustomerImportRow[] = [];
   const reviewRows: number[] = [];
+  const includedReviewRows: number[] = [];
   const identities = new Set<string>();
 
   for (const row of dataRows) {
@@ -203,16 +218,18 @@ export function prepareCustomerRows(
 
     if (status === REVIEW_STATUS) {
       reviewRows.push(sourceRow);
-      continue;
+      if (!options.includeReview) continue;
+      includedReviewRows.push(sourceRow);
     }
-    if (status !== READY_STATUS) {
+    if (status !== READY_STATUS && status !== REVIEW_STATUS) {
       throw new TypeError(
         `Unknown customer status ${status || '(blank)'} at row ${sourceRow}.`,
       );
     }
     if (!displayName)
       throw new TypeError(`Missing customer name at row ${sourceRow}.`);
-    if (!isValidThaiTaxId(taxId)) {
+    const validTaxId = isValidThaiTaxId(taxId) ? taxId : undefined;
+    if (status === READY_STATUS && !validTaxId) {
       throw new TypeError(`Invalid Thai Tax ID at ready row ${sourceRow}.`);
     }
     for (const phoneNumber of phoneNumbers) {
@@ -223,7 +240,12 @@ export function prepareCustomerRows(
       }
     }
 
-    const identityKey = customerIdentityKey({ taxId, branchType, address });
+    const identityKey = customerIdentityKey({
+      taxId: validTaxId,
+      displayName,
+      branchType,
+      address,
+    });
     if (identities.has(identityKey)) {
       throw new TypeError(
         `Duplicate customer identity in source at row ${sourceRow}.`,
@@ -231,7 +253,7 @@ export function prepareCustomerRows(
     }
     identities.add(identityKey);
 
-    readyRows.push({
+    importRows.push({
       sourceRow,
       identityKey,
       document: {
@@ -240,7 +262,7 @@ export function prepareCustomerRows(
         phoneNumbers,
         ...(phoneNumbers[0] ? { phoneNumber: phoneNumbers[0] } : {}),
         ...(email ? { email } : {}),
-        taxId,
+        ...(validTaxId ? { taxId: validTaxId } : {}),
         companyName: displayName,
         ...(address ? { address } : {}),
         ...(branchType ? { branchType } : {}),
@@ -249,7 +271,12 @@ export function prepareCustomerRows(
     });
   }
 
-  return { sourceRows: dataRows.length, readyRows, reviewRows };
+  return {
+    sourceRows: dataRows.length,
+    importRows,
+    reviewRows,
+    includedReviewRows,
+  };
 }
 
 async function readZipXml(filePath: string): Promise<Map<string, string>> {
@@ -268,6 +295,7 @@ async function readZipXml(filePath: string): Promise<Map<string, string>> {
 
 export async function loadCustomerWorkbook(
   filePath: string,
+  options: { includeReview?: boolean } = {},
 ): Promise<CustomerWorkbookImport> {
   const [buffer, zipContent] = await Promise.all([
     readFile(filePath),
@@ -305,7 +333,10 @@ export async function loadCustomerWorkbook(
   const sheetXml = zipContent.get(sheetPath);
   if (!sheetXml) throw new TypeError(`Missing worksheet content ${sheetPath}.`);
   const sharedStrings = parseSharedStrings(zipContent);
-  const prepared = prepareCustomerRows(worksheetRows(sheetXml, sharedStrings));
+  const prepared = prepareCustomerRows(
+    worksheetRows(sheetXml, sharedStrings),
+    options,
+  );
 
   return {
     sourceSha256: createHash('sha256').update(buffer).digest('hex'),
