@@ -56,6 +56,20 @@ class EnvironmentVariables {
   ADMIN_LOGIN_PASSWORD?: string;
 
   @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  AGENT_LOGIN_USERNAME?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  AGENT_LOGIN_PASSWORD?: string;
+
+  @IsOptional()
+  @IsIn(['staff', 'manager', 'admin'])
+  AGENT_LOGIN_ROLE?: string;
+
+  @IsOptional()
   @IsIn(['development', 'test', 'production'])
   NODE_ENV?: string;
 }
@@ -81,6 +95,15 @@ export function validateEnv(
   ) {
     throw new Error(
       'Config validation error: ADMIN_LOGIN_USERNAME and ADMIN_LOGIN_PASSWORD must be provided together',
+    );
+  }
+
+  if (
+    Boolean(validatedConfig.AGENT_LOGIN_USERNAME) !==
+    Boolean(validatedConfig.AGENT_LOGIN_PASSWORD)
+  ) {
+    throw new Error(
+      'Config validation error: AGENT_LOGIN_USERNAME and AGENT_LOGIN_PASSWORD must be provided together',
     );
   }
 
