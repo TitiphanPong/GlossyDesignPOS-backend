@@ -17,6 +17,7 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { ProductionModule } from './production/production.module';
 import { CustomersModule } from './customers/customers.module';
+import { CustomerDisplayModule } from './customer-display/customer-display.module';
 
 @Module({
   imports: [
@@ -42,6 +43,7 @@ import { CustomersModule } from './customers/customers.module';
     InventoryModule,
     ProductionModule,
     CustomersModule,
+    CustomerDisplayModule,
   ],
   controllers: [HealthController],
   providers: [
