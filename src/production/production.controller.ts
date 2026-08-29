@@ -37,6 +37,11 @@ export class ProductionController {
     return this.productionService.listOrderJobs(orderId);
   }
 
+  @Get('assignees')
+  listAssignees() {
+    return this.productionService.listAssignees();
+  }
+
   @Get(':id')
   get(@Param('id') id: string) {
     return this.productionService.getJob(id);

@@ -87,6 +87,7 @@ export class ProductionService {
           orderId: order._id,
           orderNumber,
           workSummary,
+          jobType: dto.jobType?.trim() || undefined,
           dueAt,
           priority: dto.priority ?? 'normal',
           assigneeUserId: assignee?.id,
@@ -116,6 +117,12 @@ export class ProductionService {
     const filter: FilterQuery<ProductionJob> = {};
     if (query.stage) filter.stage = query.stage;
     if (query.priority) filter.priority = query.priority;
+    if (query.jobType?.trim()) {
+      const escapedJobType = query.jobType
+        .trim()
+        .replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      filter.jobType = { $regex: `^${escapedJobType}$`, $options: 'i' };
+    }
     if (query.assigneeUserId) filter.assigneeUserId = query.assigneeUserId;
 
     if (query.due && query.due !== 'all') {
@@ -133,11 +140,21 @@ export class ProductionService {
     if (search) {
       const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const regex = { $regex: escaped, $options: 'i' };
+      const matchingOrders = await this.orderModel
+        .find({ customerName: regex })
+        .select({ _id: 1 })
+        .limit(100)
+        .lean()
+        .exec();
       filter.$or = [
         { jobNumber: regex },
         { orderNumber: regex },
         { workSummary: regex },
+        { jobType: regex },
         { assigneeUsername: regex },
+        ...(matchingOrders.length
+          ? [{ orderId: { $in: matchingOrders.map((order) => order._id) } }]
+          : []),
       ];
     }
 
@@ -169,6 +186,19 @@ export class ProductionService {
     return jobs.map((job) => this.toResponse(job));
   }
 
+  async listAssignees() {
+    const users = await this.userModel
+      .find({ active: true })
+      .select({ username: 1 })
+      .sort({ username: 1 })
+      .lean()
+      .exec();
+    return users.map((user) => ({
+      id: String(user._id),
+      username: user.username,
+    }));
+  }
+
   async getJob(id: string) {
     this.assertObjectId(id, 'production job id');
     const job = await this.productionJobModel.findById(id).exec();
@@ -190,6 +220,8 @@ export class ProductionService {
       update.workSummary = workSummary;
     }
     if (dto.dueAt !== undefined) update.dueAt = this.parseDueAt(dto.dueAt);
+    if (dto.jobType !== undefined)
+      update.jobType = dto.jobType.trim() || undefined;
     if (dto.priority !== undefined) update.priority = dto.priority;
     if (dto.internalNote !== undefined)
       update.internalNote = dto.internalNote.trim() || undefined;
@@ -343,6 +375,7 @@ export class ProductionService {
       orderId: String(job.orderId),
       orderNumber: job.orderNumber,
       workSummary: job.workSummary,
+      jobType: job.jobType,
       dueAt: job.dueAt,
       dueAtBangkok: this.formatBangkok(job.dueAt),
       priority: job.priority,

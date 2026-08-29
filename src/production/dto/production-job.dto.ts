@@ -33,6 +33,11 @@ export class CreateProductionJobDto {
   dueAt!: string;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  jobType?: string;
+
+  @IsOptional()
   @IsIn(PRODUCTION_JOB_PRIORITIES)
   priority?: ProductionJobPriority;
 
@@ -62,6 +67,11 @@ export class UpdateProductionJobDto {
   @IsOptional()
   @IsDateString()
   dueAt?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  jobType?: string;
 
   @IsOptional()
   @IsIn(PRODUCTION_JOB_PRIORITIES)
@@ -109,6 +119,11 @@ export class ListProductionJobsQueryDto {
   @IsOptional()
   @IsIn(PRODUCTION_JOB_PRIORITIES)
   priority?: ProductionJobPriority;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  jobType?: string;
 
   @IsOptional()
   @IsString()

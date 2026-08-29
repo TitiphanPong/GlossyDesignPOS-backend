@@ -17,6 +17,7 @@ function makeJob(stage: ProductionJobDocument['stage'] = 'file_check') {
     orderId: new Types.ObjectId(orderId),
     orderNumber: 'OR-0001',
     workSummary: 'Print customer artwork',
+    jobType: 'นามบัตร',
     dueAt: new Date('2026-08-30T03:00:00.000Z'),
     priority: 'normal',
     linkedUploadIds: [],
@@ -100,8 +101,53 @@ describe('ProductionService', () => {
 
     expect(result.customerMilestone).toBe('ready');
     expect(result.isOverdue).toBe(false);
+    expect(result.jobType).toBe('นามบัตร');
     expect(result).not.toHaveProperty('total');
     expect(result).not.toHaveProperty('remainingTotal');
     expect(result).not.toHaveProperty('phoneNumber');
+  });
+
+  it('supports job-type filtering and customer-name search without exposing customer PII', async () => {
+    const job = makeJob();
+    const listQuery = {
+      sort: jest.fn().mockReturnThis(),
+      skip: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
+      exec: jest.fn().mockResolvedValue([job]),
+    };
+    let capturedFilter: unknown;
+    const find = jest.fn((filter: unknown) => {
+      capturedFilter = filter;
+      return listQuery;
+    });
+    const productionJobModel = {
+      countDocuments: jest
+        .fn()
+        .mockReturnValue({ exec: jest.fn().mockResolvedValue(1) }),
+      find,
+    } as unknown as Model<ProductionJobDocument>;
+    const orderLookup = {
+      select: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockReturnThis(),
+      exec: jest.fn().mockResolvedValue([{ _id: new Types.ObjectId(orderId) }]),
+    };
+    const orderFind = jest.fn().mockReturnValue(orderLookup);
+    const service = new ProductionService(
+      productionJobModel,
+      { find: orderFind } as unknown as Model<OrderDocument>,
+      {} as Model<UploadDocument>,
+      {} as Model<UserDocument>,
+    );
+
+    const result = await service.listJobs({ q: 'สมชาย', jobType: 'นามบัตร' });
+
+    expect(orderFind).toHaveBeenCalledTimes(1);
+    expect(find).toHaveBeenCalledTimes(1);
+    const serializedFilter = JSON.stringify(capturedFilter);
+    expect(serializedFilter).toContain('"jobType"');
+    expect(serializedFilter).toContain('"orderId"');
+    expect(result.items[0]?.jobType).toBe('นามบัตร');
+    expect(result.items[0]).not.toHaveProperty('customerName');
   });
 });

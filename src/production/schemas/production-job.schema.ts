@@ -30,6 +30,9 @@ export class ProductionJob {
   @Prop({ required: true, maxlength: 240 })
   workSummary!: string;
 
+  @Prop({ maxlength: 80, index: true })
+  jobType?: string;
+
   @Prop({ type: Date, required: true, index: true })
   dueAt!: Date;
 
