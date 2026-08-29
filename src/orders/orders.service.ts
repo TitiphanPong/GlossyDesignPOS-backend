@@ -38,6 +38,7 @@ import {
   toMinorUnits,
 } from './order-money';
 import { OrderPricingService } from './order-pricing.service';
+import { normalizeBackdatedSale } from './order-backdate';
 import { UserRole } from '../auth/auth.constants';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -1332,20 +1333,15 @@ export class OrdersService {
   ): Promise<Partial<Order>> {
     const now = new Date();
     const entryMode = orderDto.entryMode ?? 'normal';
-    const saleDate =
-      entryMode === 'backdated' ? new Date(orderDto.saleDate ?? '') : now;
-
-    if (
-      entryMode === 'backdated' &&
-      (!orderDto.saleDate || Number.isNaN(saleDate.getTime()))
-    ) {
-      throw new BadRequestException(
-        'saleDate is required for a backdated order.',
-      );
-    }
-    if (saleDate.getTime() > now.getTime()) {
-      throw new BadRequestException('saleDate cannot be in the future.');
-    }
+    const backdatedSale =
+      entryMode === 'backdated'
+        ? normalizeBackdatedSale({
+            saleDate: orderDto.saleDate,
+            backdatedReason: orderDto.backdatedReason,
+            now,
+          })
+        : null;
+    const saleDate = backdatedSale?.saleDate ?? now;
 
     const orderType = orderDto.orderType ?? 'NORMAL';
     const cart = await this.orderPricing.resolveCart(
@@ -1431,10 +1427,7 @@ export class OrdersService {
       saleDate,
       entryMode,
       isBackdated: entryMode === 'backdated',
-      backdatedReason:
-        entryMode === 'backdated'
-          ? orderDto.backdatedReason?.trim() || undefined
-          : undefined,
+      backdatedReason: backdatedSale?.backdatedReason,
       taxInvoice,
       vatAmount: money.vatAmount,
       receivedAmount: money.receivedAmount,
