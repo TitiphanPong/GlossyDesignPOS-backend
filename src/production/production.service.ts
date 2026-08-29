@@ -1,0 +1,387 @@
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
+import { randomBytes } from 'node:crypto';
+import { MongoServerError } from 'mongodb';
+import { FilterQuery, isValidObjectId, Model, Types } from 'mongoose';
+import { AuthenticatedUser } from '../auth/auth.types';
+import { User, UserDocument } from '../auth/schemas/user.schema';
+import { PublicTrackingMilestone } from '../orders/dto/tracking-response.dto';
+import { Order, OrderDocument } from '../orders/orders.schema';
+import { Upload, UploadDocument } from '../uploads/schemas/upload.schema';
+import {
+  CreateProductionJobDto,
+  ListProductionJobsQueryDto,
+  UpdateProductionJobDto,
+} from './dto/production-job.dto';
+import {
+  ProductionJob,
+  ProductionJobDocument,
+  ProductionJobStage,
+} from './schemas/production-job.schema';
+
+const BANGKOK_OFFSET_MS = 7 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const NEXT_STAGE: Partial<Record<ProductionJobStage, ProductionJobStage>> = {
+  file_check: 'queued',
+  queued: 'producing',
+  producing: 'quality_check',
+  quality_check: 'ready',
+  ready: 'delivered',
+};
+const CUSTOMER_MILESTONE_BY_STAGE: Record<
+  ProductionJobStage,
+  PublicTrackingMilestone
+> = {
+  file_check: 'received',
+  queued: 'received',
+  producing: 'in_progress',
+  quality_check: 'in_progress',
+  ready: 'ready',
+  delivered: 'completed',
+};
+const COMPLETE_STAGES = new Set<ProductionJobStage>(['ready', 'delivered']);
+
+@Injectable()
+export class ProductionService {
+  constructor(
+    @InjectModel(ProductionJob.name)
+    private readonly productionJobModel: Model<ProductionJobDocument>,
+    @InjectModel(Order.name)
+    private readonly orderModel: Model<OrderDocument>,
+    @InjectModel(Upload.name)
+    private readonly uploadModel: Model<UploadDocument>,
+    @InjectModel(User.name)
+    private readonly userModel: Model<UserDocument>,
+  ) {}
+
+  async createJob(
+    dto: CreateProductionJobDto,
+    actor: Pick<AuthenticatedUser, 'id'>,
+  ) {
+    this.assertObjectId(dto.orderId, 'order id');
+    const order = await this.orderModel.findById(dto.orderId).exec();
+    if (!order)
+      throw new NotFoundException(`Order "${dto.orderId}" not found.`);
+
+    const workSummary = dto.workSummary.trim();
+    if (!workSummary)
+      throw new BadRequestException('Work summary is required.');
+    const dueAt = this.parseDueAt(dto.dueAt);
+    const assignee = await this.resolveAssignee(dto.assigneeUserId);
+    const linkedUploadIds = await this.validateLinkedUploads(
+      dto.linkedUploadIds ?? [],
+      dto.orderId,
+    );
+    const orderNumber = order.orderNumber ?? order.orderId ?? String(order._id);
+    const changedAt = new Date();
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      try {
+        const created = await this.productionJobModel.create({
+          jobNumber: this.generateJobNumber(changedAt),
+          orderId: order._id,
+          orderNumber,
+          workSummary,
+          dueAt,
+          priority: dto.priority ?? 'normal',
+          assigneeUserId: assignee?.id,
+          assigneeUsername: assignee?.username,
+          internalNote: dto.internalNote?.trim() || undefined,
+          linkedUploadIds,
+          stage: 'file_check',
+          stageHistory: [
+            { stage: 'file_check', changedAt, changedBy: actor.id },
+          ],
+        });
+        return this.toResponse(created);
+      } catch (error) {
+        if (this.isDuplicateKey(error) && attempt < 4) continue;
+        throw error;
+      }
+    }
+
+    throw new ConflictException(
+      'Unable to allocate a unique production job number.',
+    );
+  }
+
+  async listJobs(query: ListProductionJobsQueryDto = {}) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 25;
+    const filter: FilterQuery<ProductionJob> = {};
+    if (query.stage) filter.stage = query.stage;
+    if (query.priority) filter.priority = query.priority;
+    if (query.assigneeUserId) filter.assigneeUserId = query.assigneeUserId;
+
+    if (query.due && query.due !== 'all') {
+      const now = new Date();
+      if (query.due === 'overdue') {
+        filter.dueAt = { $lt: now };
+        filter.stage = { $nin: ['ready', 'delivered'] };
+      } else {
+        const { start, end } = this.bangkokDayBounds(now);
+        filter.dueAt = { $gte: start, $lt: end };
+      }
+    }
+
+    const search = query.q?.trim();
+    if (search) {
+      const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = { $regex: escaped, $options: 'i' };
+      filter.$or = [
+        { jobNumber: regex },
+        { orderNumber: regex },
+        { workSummary: regex },
+        { assigneeUsername: regex },
+      ];
+    }
+
+    const [total, jobs] = await Promise.all([
+      this.productionJobModel.countDocuments(filter).exec(),
+      this.productionJobModel
+        .find(filter)
+        .sort({ priority: -1, dueAt: 1, createdAt: 1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .exec(),
+    ]);
+
+    return {
+      items: jobs.map((job) => this.toResponse(job)),
+      page,
+      limit,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+    };
+  }
+
+  async listOrderJobs(orderId: string) {
+    this.assertObjectId(orderId, 'order id');
+    const jobs = await this.productionJobModel
+      .find({ orderId: new Types.ObjectId(orderId) })
+      .sort({ createdAt: 1 })
+      .exec();
+    return jobs.map((job) => this.toResponse(job));
+  }
+
+  async getJob(id: string) {
+    this.assertObjectId(id, 'production job id');
+    const job = await this.productionJobModel.findById(id).exec();
+    if (!job) throw new NotFoundException(`Production job "${id}" not found.`);
+    return this.toResponse(job);
+  }
+
+  async updateJob(id: string, dto: UpdateProductionJobDto) {
+    this.assertObjectId(id, 'production job id');
+    const current = await this.productionJobModel.findById(id).exec();
+    if (!current)
+      throw new NotFoundException(`Production job "${id}" not found.`);
+
+    const update: Record<string, unknown> = {};
+    if (dto.workSummary !== undefined) {
+      const workSummary = dto.workSummary.trim();
+      if (!workSummary)
+        throw new BadRequestException('Work summary is required.');
+      update.workSummary = workSummary;
+    }
+    if (dto.dueAt !== undefined) update.dueAt = this.parseDueAt(dto.dueAt);
+    if (dto.priority !== undefined) update.priority = dto.priority;
+    if (dto.internalNote !== undefined)
+      update.internalNote = dto.internalNote.trim() || undefined;
+    if (dto.assigneeUserId !== undefined) {
+      const assignee = await this.resolveAssignee(dto.assigneeUserId);
+      update.assigneeUserId = assignee?.id;
+      update.assigneeUsername = assignee?.username;
+    }
+    if (dto.linkedUploadIds !== undefined) {
+      update.linkedUploadIds = await this.validateLinkedUploads(
+        dto.linkedUploadIds,
+        String(current.orderId),
+      );
+    }
+    if (!Object.keys(update).length) {
+      throw new BadRequestException(
+        'At least one production job field is required.',
+      );
+    }
+
+    const updated = await this.productionJobModel
+      .findByIdAndUpdate(
+        id,
+        { $set: update },
+        { new: true, runValidators: true },
+      )
+      .exec();
+    if (!updated)
+      throw new NotFoundException(`Production job "${id}" not found.`);
+    return this.toResponse(updated);
+  }
+
+  async updateStage(
+    id: string,
+    target: ProductionJobStage,
+    actor: Pick<AuthenticatedUser, 'id'>,
+  ) {
+    this.assertObjectId(id, 'production job id');
+    const current = await this.productionJobModel.findById(id).exec();
+    if (!current)
+      throw new NotFoundException(`Production job "${id}" not found.`);
+    if (current.stage === target) return this.toResponse(current);
+
+    const expected = NEXT_STAGE[current.stage];
+    if (expected !== target) {
+      throw new ConflictException(
+        `Production job cannot transition from ${current.stage} to ${target}.`,
+      );
+    }
+
+    const changedAt = new Date();
+    const updated = await this.productionJobModel
+      .findOneAndUpdate(
+        { _id: current._id, stage: current.stage },
+        {
+          $set: { stage: target },
+          $push: {
+            stageHistory: { stage: target, changedAt, changedBy: actor.id },
+          },
+        },
+        { new: true, runValidators: true },
+      )
+      .exec();
+
+    if (!updated) {
+      const latest = await this.productionJobModel.findById(id).exec();
+      if (latest?.stage === target) return this.toResponse(latest);
+      throw new ConflictException(
+        'Production job changed concurrently. Refresh and retry.',
+      );
+    }
+    return this.toResponse(updated);
+  }
+
+  private async resolveAssignee(userId?: string) {
+    const normalized = userId?.trim();
+    if (!normalized) return undefined;
+    this.assertObjectId(normalized, 'assignee user id');
+    const user = await this.userModel
+      .findOne({ _id: normalized, active: true })
+      .select({ username: 1 })
+      .lean()
+      .exec();
+    if (!user)
+      throw new BadRequestException('Assignee must be an active staff user.');
+    return { id: String(user._id), username: user.username };
+  }
+
+  private async validateLinkedUploads(uploadIds: string[], orderId: string) {
+    const unique = [
+      ...new Set(uploadIds.map((value) => value.trim()).filter(Boolean)),
+    ];
+    if (!unique.length) return [];
+    const uploads = await this.uploadModel
+      .find({ uploadId: { $in: unique } })
+      .select({ uploadId: 1, linkedOrderId: 1 })
+      .lean()
+      .exec();
+    const byId = new Map(uploads.map((upload) => [upload.uploadId, upload]));
+    for (const uploadId of unique) {
+      const upload = byId.get(uploadId);
+      if (!upload)
+        throw new BadRequestException(`Upload "${uploadId}" not found.`);
+      if (upload.linkedOrderId !== orderId) {
+        throw new BadRequestException(
+          `Upload "${uploadId}" must be linked to the same Order first.`,
+        );
+      }
+    }
+    return unique;
+  }
+
+  private parseDueAt(value: string) {
+    const parsed = new Date(value);
+    if (!Number.isFinite(parsed.getTime()))
+      throw new BadRequestException('Invalid dueAt.');
+    return parsed;
+  }
+
+  private bangkokDayBounds(now: Date) {
+    const bangkokNow = new Date(now.getTime() + BANGKOK_OFFSET_MS);
+    const utcDay = Date.UTC(
+      bangkokNow.getUTCFullYear(),
+      bangkokNow.getUTCMonth(),
+      bangkokNow.getUTCDate(),
+    );
+    return {
+      start: new Date(utcDay - BANGKOK_OFFSET_MS),
+      end: new Date(utcDay - BANGKOK_OFFSET_MS + DAY_MS),
+    };
+  }
+
+  private formatBangkok(value: Date) {
+    return new Intl.DateTimeFormat('sv-SE', {
+      timeZone: 'Asia/Bangkok',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    }).format(value);
+  }
+
+  private toResponse(job: ProductionJobDocument) {
+    const now = new Date();
+    return {
+      id: String(job._id),
+      jobNumber: job.jobNumber,
+      orderId: String(job.orderId),
+      orderNumber: job.orderNumber,
+      workSummary: job.workSummary,
+      dueAt: job.dueAt,
+      dueAtBangkok: this.formatBangkok(job.dueAt),
+      priority: job.priority,
+      isRush: job.priority === 'rush',
+      isOverdue:
+        job.dueAt.getTime() < now.getTime() && !COMPLETE_STAGES.has(job.stage),
+      assignee: job.assigneeUserId
+        ? { id: job.assigneeUserId, username: job.assigneeUsername ?? '' }
+        : null,
+      internalNote: job.internalNote,
+      linkedUploadIds: [...job.linkedUploadIds],
+      stage: job.stage,
+      customerMilestone: CUSTOMER_MILESTONE_BY_STAGE[job.stage],
+      stageHistory: job.stageHistory.map((entry) => ({
+        stage: entry.stage,
+        changedAt: entry.changedAt,
+        changedBy: entry.changedBy,
+      })),
+      createdAt: (job as ProductionJobDocument & { createdAt?: Date })
+        .createdAt,
+      updatedAt: (job as ProductionJobDocument & { updatedAt?: Date })
+        .updatedAt,
+    };
+  }
+
+  private generateJobNumber(now: Date) {
+    const bangkok = new Date(now.getTime() + BANGKOK_OFFSET_MS);
+    const y = bangkok.getUTCFullYear();
+    const m = String(bangkok.getUTCMonth() + 1).padStart(2, '0');
+    const d = String(bangkok.getUTCDate()).padStart(2, '0');
+    return `PJ-${y}${m}${d}-${randomBytes(4).toString('hex').toUpperCase()}`;
+  }
+
+  private assertObjectId(value: string, label: string) {
+    if (!isValidObjectId(value))
+      throw new BadRequestException(`Invalid ${label}.`);
+  }
+
+  private isDuplicateKey(error: unknown) {
+    return error instanceof MongoServerError && error.code === 11000;
+  }
+}
