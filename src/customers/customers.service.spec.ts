@@ -44,6 +44,30 @@ describe('CustomersService', () => {
     expect(first.customerCode).not.toBe(second.customerCode);
   });
 
+  it('stores multiple phone numbers while keeping the first as the legacy primary phone', async () => {
+    const create = jest.fn((value: Record<string, unknown>) =>
+      Promise.resolve(value),
+    );
+    const service = new CustomersService(
+      { create } as unknown as Model<CustomerDocument>,
+      {} as Model<OrderDocument>,
+      {} as Model<ProductionJobDocument>,
+      {} as Model<UploadDocument>,
+    );
+
+    await service.create({
+      displayName: 'Multiple phones',
+      phoneNumbers: ['02-7385801', '02-31660369', '02-7385801'],
+    });
+
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        phoneNumber: '02-7385801',
+        phoneNumbers: ['02-7385801', '02-31660369'],
+      }),
+    );
+  });
+
   it('derives detail aggregates from authoritative linked records without copying them into customer data', async () => {
     const customerId = new Types.ObjectId();
     const orderId = new Types.ObjectId();
@@ -129,6 +153,7 @@ describe('CustomersService', () => {
     });
 
     expect(JSON.stringify(capturedFilter)).toContain('displayName');
+    expect(JSON.stringify(capturedFilter)).toContain('phoneNumbers');
     expect(JSON.stringify(capturedFilter)).toContain('"active":true');
     expect(findResult.skip).toHaveBeenCalledWith(10);
     expect(result.total).toBe(1);

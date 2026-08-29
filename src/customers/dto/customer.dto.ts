@@ -1,5 +1,6 @@
 import { Transform, Type } from 'class-transformer';
 import {
+  IsArray,
   IsBoolean,
   IsEmail,
   IsInt,
@@ -12,6 +13,15 @@ import {
 
 const optionalTrim = ({ value }: { value: unknown }) =>
   typeof value === 'string' ? value.trim() || undefined : value;
+
+const optionalTrimmedStrings = ({ value }: { value: unknown }) =>
+  Array.isArray(value)
+    ? value
+        .map((item: unknown): unknown =>
+          typeof item === 'string' ? item.trim() : item,
+        )
+        .filter((item) => item !== '')
+    : value;
 
 const optionalBoolean = ({ value }: { value: unknown }): unknown => {
   if (value === 'true') return true;
@@ -30,6 +40,13 @@ export class CreateCustomerDto {
   @IsString()
   @MaxLength(20)
   phoneNumber?: string;
+
+  @IsOptional()
+  @Transform(optionalTrimmedStrings)
+  @IsArray()
+  @IsString({ each: true })
+  @MaxLength(20, { each: true })
+  phoneNumbers?: string[];
 
   @IsOptional()
   @Transform(optionalTrim)

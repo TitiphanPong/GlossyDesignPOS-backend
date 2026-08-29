@@ -14,6 +14,9 @@ export class Customer {
   @Prop({ maxlength: 20, index: true })
   phoneNumber?: string;
 
+  @Prop({ type: [String], default: [], index: true })
+  phoneNumbers!: string[];
+
   @Prop({ maxlength: 160, index: true })
   email?: string;
 
@@ -53,3 +56,12 @@ export class Customer {
 
 export const CustomerSchema = SchemaFactory.createForClass(Customer);
 CustomerSchema.index({ displayName: 1, phoneNumber: 1 });
+CustomerSchema.path('phoneNumbers').validate(
+  (values: unknown[]) =>
+    Array.isArray(values) &&
+    values.every(
+      (value) =>
+        typeof value === 'string' && value.length > 0 && value.length <= 20,
+    ),
+  'Each customer phone number must contain 1-20 characters.',
+);

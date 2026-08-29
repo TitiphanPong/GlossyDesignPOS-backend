@@ -47,6 +47,7 @@ export class CustomersService {
         { customerCode: { $regex: safe, $options: 'i' } },
         { displayName: { $regex: safe, $options: 'i' } },
         { phoneNumber: { $regex: safe, $options: 'i' } },
+        { phoneNumbers: { $regex: safe, $options: 'i' } },
         { email: { $regex: safe, $options: 'i' } },
         { taxId: { $regex: safe, $options: 'i' } },
       ];
@@ -70,8 +71,10 @@ export class CustomersService {
     }
     for (let attempt = 0; attempt < 5; attempt += 1) {
       try {
+        const phoneFields = this.normalizePhoneFields(dto);
         return await this.customerModel.create({
           ...dto,
+          ...phoneFields,
           customerCode: `CUS-${randomBytes(5).toString('hex').toUpperCase()}`,
           active: true,
         });
@@ -84,8 +87,25 @@ export class CustomersService {
 
   async update(id: string, dto: UpdateCustomerDto) {
     this.assertId(id);
+    const shouldUpdatePhones =
+      dto.phoneNumber !== undefined || dto.phoneNumbers !== undefined;
+    const rest: Record<string, unknown> = { ...dto };
+    delete rest.phoneNumber;
+    delete rest.phoneNumbers;
+    const phoneFields = shouldUpdatePhones
+      ? this.normalizePhoneFields(dto)
+      : undefined;
+    const update: Record<string, unknown> = {
+      $set: {
+        ...rest,
+        ...(phoneFields ?? {}),
+      },
+    };
+    if (phoneFields && !phoneFields.phoneNumber) {
+      update.$unset = { phoneNumber: 1 };
+    }
     const updated = await this.customerModel
-      .findByIdAndUpdate(id, { $set: dto }, { new: true, runValidators: true })
+      .findByIdAndUpdate(id, update, { new: true, runValidators: true })
       .exec();
     if (!updated) throw new NotFoundException('Customer not found.');
     return updated;
@@ -152,6 +172,22 @@ export class CustomersService {
     if (!isValidObjectId(id)) {
       throw new BadRequestException('Invalid customer id.');
     }
+  }
+
+  private normalizePhoneFields(dto: {
+    phoneNumber?: string;
+    phoneNumbers?: string[];
+  }): { phoneNumber?: string; phoneNumbers: string[] } {
+    const phoneNumbers = [dto.phoneNumber, ...(dto.phoneNumbers ?? [])]
+      .filter((value): value is string => typeof value === 'string')
+      .map((value) => value.trim())
+      .filter(
+        (value, index, values) => value && values.indexOf(value) === index,
+      );
+    return {
+      phoneNumbers,
+      ...(phoneNumbers[0] ? { phoneNumber: phoneNumbers[0] } : {}),
+    };
   }
 
   private isDuplicateKey(error: unknown): boolean {
