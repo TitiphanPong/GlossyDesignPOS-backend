@@ -5,6 +5,17 @@ import { S3Service } from './uploads/s3/s3.service';
 
 const READINESS_TIMEOUT_MS = 2_500;
 
+export type ReadinessDependencyStatus = 'ready' | 'unready';
+
+export type ReadinessDetails = {
+  status: 'ready' | 'unready';
+  checkedAt: string;
+  dependencies: {
+    database: ReadinessDependencyStatus;
+    objectStorage: ReadinessDependencyStatus;
+  };
+};
+
 @Injectable()
 export class HealthService {
   private readonly logger = new Logger(HealthService.name);
@@ -15,6 +26,11 @@ export class HealthService {
   ) {}
 
   async isReady(): Promise<boolean> {
+    const details = await this.getReadinessDetails();
+    return details.status === 'ready';
+  }
+
+  async getReadinessDetails(): Promise<ReadinessDetails> {
     const mongoCheck = this.connection.db
       ? this.connection.db
           .admin()
@@ -39,7 +55,20 @@ export class HealthService {
       this.logger.warn('Readiness check failed: S3 unavailable');
     }
 
-    return mongo.status === 'fulfilled' && s3.status === 'fulfilled';
+    const database: ReadinessDependencyStatus =
+      mongo.status === 'fulfilled' ? 'ready' : 'unready';
+    const objectStorage: ReadinessDependencyStatus =
+      s3.status === 'fulfilled' ? 'ready' : 'unready';
+
+    return {
+      status:
+        database === 'ready' && objectStorage === 'ready' ? 'ready' : 'unready',
+      checkedAt: new Date().toISOString(),
+      dependencies: {
+        database,
+        objectStorage,
+      },
+    };
   }
 
   private async withTimeout<T>(

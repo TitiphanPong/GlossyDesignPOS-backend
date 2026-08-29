@@ -29,15 +29,41 @@ describe('HealthService', () => {
     expect(checkReadiness).toHaveBeenCalledWith(2_500);
   });
 
+  it('returns secret-free readiness details for healthy dependencies', async () => {
+    const { service } = createService();
+
+    await expect(service.getReadinessDetails()).resolves.toMatchObject({
+      status: 'ready',
+      dependencies: {
+        database: 'ready',
+        objectStorage: 'ready',
+      },
+    });
+  });
+
   it('is unready when MongoDB is unavailable', async () => {
     const { service } = createService({ mongoError: new Error('offline') });
 
     await expect(service.isReady()).resolves.toBe(false);
+    await expect(service.getReadinessDetails()).resolves.toMatchObject({
+      status: 'unready',
+      dependencies: {
+        database: 'unready',
+        objectStorage: 'ready',
+      },
+    });
   });
 
   it('is unready when S3 is unavailable', async () => {
     const { service } = createService({ s3Error: new Error('offline') });
 
     await expect(service.isReady()).resolves.toBe(false);
+    await expect(service.getReadinessDetails()).resolves.toMatchObject({
+      status: 'unready',
+      dependencies: {
+        database: 'ready',
+        objectStorage: 'unready',
+      },
+    });
   });
 });

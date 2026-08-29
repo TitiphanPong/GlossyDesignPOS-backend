@@ -21,4 +21,9 @@ export class HealthController {
 
     return { status: 'ready' };
   }
+
+  @Get('ready/details')
+  readinessDetails() {
+    return this.healthService.getReadinessDetails();
+  }
 }
