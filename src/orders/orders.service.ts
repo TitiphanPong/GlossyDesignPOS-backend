@@ -10,7 +10,7 @@ import {
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { createHash, randomBytes } from 'node:crypto';
 import { MongoServerError } from 'mongodb';
-import { Connection, isValidObjectId, Model } from 'mongoose';
+import { Connection, isValidObjectId, Model, Types } from 'mongoose';
 import { RunningNumberService } from '../counters/running-number.service';
 import { OrderResponseDto } from './dto/order-response.dto';
 import {
@@ -41,6 +41,10 @@ import { OrderPricingService } from './order-pricing.service';
 import { UserRole } from '../auth/auth.constants';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { NotificationsService } from '../notifications/notifications.service';
+import {
+  Customer,
+  CustomerDocument,
+} from '../customers/schemas/customer.schema';
 import {
   OrderReportingService,
   OrderReportSummary,
@@ -96,6 +100,9 @@ export class OrdersService {
     @Optional() private readonly orderReporting: OrderReportingService,
     private readonly notificationsService: NotificationsService,
     @InjectConnection() private readonly mongoConnection: Connection,
+    @Optional()
+    @InjectModel(Customer.name)
+    private readonly customerModel?: Model<CustomerDocument>,
   ) {}
 
   async create(
@@ -1367,8 +1374,29 @@ export class OrdersService {
         ]
       : [];
 
+    let customerId: Types.ObjectId | undefined;
+    if (orderDto.customerId) {
+      if (!this.customerModel) {
+        throw new InternalServerErrorException(
+          'Customer directory is unavailable.',
+        );
+      }
+      const selectedCustomer = await this.customerModel
+        .findOne({ _id: orderDto.customerId, active: true })
+        .select('_id')
+        .lean()
+        .exec();
+      if (!selectedCustomer) {
+        throw new BadRequestException(
+          'Selected customer does not exist or is inactive.',
+        );
+      }
+      customerId = new Types.ObjectId(orderDto.customerId);
+    }
+
     return {
       orderType,
+      ...(customerId ? { customerId } : {}),
       customerName: orderDto.customerName ?? '',
       companyName: orderDto.companyName,
       phoneNumber: orderDto.phoneNumber ?? '',

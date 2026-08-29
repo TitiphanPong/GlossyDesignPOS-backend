@@ -16,6 +16,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { ProductionModule } from './production/production.module';
+import { CustomersModule } from './customers/customers.module';
 
 @Module({
   imports: [
@@ -40,6 +41,7 @@ import { ProductionModule } from './production/production.module';
     NotificationsModule,
     InventoryModule,
     ProductionModule,
+    CustomersModule,
   ],
   controllers: [HealthController],
   providers: [

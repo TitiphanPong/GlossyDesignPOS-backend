@@ -16,6 +16,7 @@ import { OrderPricingService } from './order-pricing.service';
 import { OrderReportingService } from './order-reporting.service';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { TrackingController } from './tracking.controller';
+import { Customer, CustomerSchema } from '../customers/schemas/customer.schema';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { TrackingController } from './tracking.controller';
       { name: Counter.name, schema: CounterSchema },
       { name: Product.name, schema: ProductSchema },
       { name: QuickProduct.name, schema: QuickProductSchema },
+      { name: Customer.name, schema: CustomerSchema },
     ]),
   ],
   controllers: [OrdersController, TrackingController],

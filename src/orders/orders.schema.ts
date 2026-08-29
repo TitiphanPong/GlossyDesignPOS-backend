@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { HydratedDocument } from 'mongoose';
+import { HydratedDocument, Types } from 'mongoose';
 
 export const PAYMENT_METHODS = ['cash', 'promptpay'] as const;
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
@@ -83,6 +83,9 @@ export class Order {
 
   @Prop({ match: /^\d{6}$/ })
   invoicePeriod?: string;
+
+  @Prop({ type: Types.ObjectId, index: true, ref: 'Customer' })
+  customerId?: Types.ObjectId;
 
   @Prop()
   customerName!: string;

@@ -5,6 +5,7 @@ import {
   IsDateString,
   IsIn,
   IsInt,
+  IsMongoId,
   IsNotEmpty,
   IsNumber,
   IsOptional,
@@ -198,6 +199,10 @@ export class CreateOrderDto {
   @IsOptional()
   @IsString()
   clientDraftId?: string;
+
+  @IsOptional()
+  @IsMongoId()
+  customerId?: string;
 
   @IsOptional()
   @IsString()
