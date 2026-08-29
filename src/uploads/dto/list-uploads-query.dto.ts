@@ -6,6 +6,7 @@ import {
   IsString,
   Matches,
   Max,
+  MaxLength,
   Min,
 } from 'class-validator';
 import { JobType, UploadStatus } from '../uploads.enums';
@@ -21,6 +22,11 @@ export enum StorageListSort {
   OLDEST = 'oldest',
   CUSTOMER = 'customer',
   STATUS = 'status',
+}
+
+export enum UploadLinkStatus {
+  LINKED = 'linked',
+  UNLINKED = 'unlinked',
 }
 
 export class ListUploadsQueryDto {
@@ -57,6 +63,15 @@ export class ListUploadsQueryDto {
   @IsOptional()
   @IsEnum(StorageListSort)
   sort?: StorageListSort = StorageListSort.NEWEST;
+
+  @IsOptional()
+  @IsEnum(UploadLinkStatus)
+  linkStatus?: UploadLinkStatus;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  orderReference?: string;
 
   @IsOptional()
   @IsString()

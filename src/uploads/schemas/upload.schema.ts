@@ -36,6 +36,12 @@ export class Upload {
   @Prop()
   batchId?: string;
 
+  @Prop({ type: String, index: true })
+  linkedOrderId?: string;
+
+  @Prop({ type: String, index: true })
+  linkedOrderNumber?: string;
+
   @Prop({
     type: String,
     enum: Object.values(UploadStage),

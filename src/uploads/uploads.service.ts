@@ -1,7 +1,13 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { FilterQuery, isValidObjectId, Model, PipelineStage } from 'mongoose';
-import { randomInt, randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import dayjs from 'dayjs';
 import { CreateUploadDto } from './dto/create-upload.dto';
 import { UploadResponseDto } from './dto/upload-response.dto';
@@ -12,10 +18,12 @@ import {
   ListUploadsQueryDto,
   StorageListSort,
   StorageListStatus,
+  UploadLinkStatus,
 } from './dto/list-uploads-query.dto';
 import { UpdateUploadDto } from './dto/update-upload.dto';
 import { UploadStage, UploadStatus } from './uploads.enums';
 import { NotificationsService } from '../notifications/notifications.service';
+import { Order, OrderDocument } from '../orders/orders.schema';
 
 const REGEX_SPECIAL_CHARS = /[.*+?^${}()|[\]\\]/g;
 const UUID_PATTERN =
@@ -33,6 +41,8 @@ export class UploadsService {
     private readonly uploadModel: Model<UploadDocument>,
     private readonly s3Service: S3Service,
     private readonly notificationsService: NotificationsService,
+    @InjectModel(Order.name)
+    private readonly orderModel: Model<OrderDocument>,
   ) {}
 
   async createUpload(
@@ -40,7 +50,7 @@ export class UploadsService {
     files: Express.Multer.File[],
   ): Promise<UploadResponseDto> {
     const uploadId = randomUUID();
-    const orderCode = this.generateOrderCode();
+    let orderCode = '';
     const now = new Date();
     const yyyy = dayjs(now).format('YYYY');
     const mm = dayjs(now).format('MM');
@@ -80,9 +90,8 @@ export class UploadsService {
         PUBLIC_UPLOAD_PREVIEW_TTL_SECONDS,
       );
 
-      savedUpload = await this.uploadModel.create({
+      const created = await this.createUploadRecordWithUniqueCode({
         uploadId,
-        orderCode,
         customerName: dto.customerName,
         phone: dto.phone,
         lineUserId: dto.lineUserId,
@@ -96,6 +105,8 @@ export class UploadsService {
         status: UploadStatus.PENDING,
         files: uploadedFiles,
       });
+      savedUpload = created.savedUpload;
+      orderCode = created.orderCode;
     } catch (error) {
       await this.cleanupUploadedObjects(
         uploadedFiles.map((file) => file.s3Key),
@@ -148,10 +159,45 @@ export class UploadsService {
     return { signedUrl, expiresIn };
   }
 
-  private generateOrderCode(): string {
+  private generateIntakeCode(): string {
     const datePart = dayjs().format('YYYYMMDD');
-    const serial = randomInt(1000, 10000);
+    const serial = randomBytes(4).toString('hex').toUpperCase();
     return `GL-${datePart}-${serial}`;
+  }
+
+  private async createUploadRecordWithUniqueCode(
+    record: Omit<Partial<Upload>, 'orderCode'> &
+      Pick<Upload, 'uploadId' | 'jobType' | 'status' | 'files'>,
+  ): Promise<{ savedUpload: UploadDocument; orderCode: string }> {
+    const maxAttempts = 5;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      const orderCode = this.generateIntakeCode();
+      try {
+        const savedUpload = await this.uploadModel.create({
+          ...record,
+          orderCode,
+        });
+        return { savedUpload, orderCode };
+      } catch (error) {
+        const mongoError = error as {
+          code?: number;
+          keyPattern?: Record<string, unknown>;
+        };
+        const duplicateCode =
+          mongoError?.code === 11000 &&
+          Boolean(mongoError.keyPattern?.orderCode);
+        if (!duplicateCode) throw error;
+        if (attempt === maxAttempts) {
+          throw new InternalServerErrorException(
+            'Failed to allocate upload intake code.',
+          );
+        }
+      }
+    }
+
+    throw new InternalServerErrorException(
+      'Failed to allocate upload intake code.',
+    );
   }
 
   private maskPhone(phone: string): string {
@@ -283,6 +329,8 @@ export class UploadsService {
           note: { $first: '$note' },
           statusNote: { $first: '$statusNote' },
           batchId: { $first: '$__resolvedBatchId' },
+          linkedOrderId: { $first: '$linkedOrderId' },
+          linkedOrderNumber: { $first: '$linkedOrderNumber' },
           stage: { $first: '$stage' },
           jobType: { $first: '$jobType' },
           status: { $first: '$status' },
@@ -308,26 +356,49 @@ export class UploadsService {
     );
 
     const groupedMatch: Record<string, unknown> = {};
+    const groupedAnd: Record<string, unknown>[] = [];
     if (query.storageStatus) groupedMatch.storageStatus = query.storageStatus;
     if (query.jobType) groupedMatch.jobType = query.jobType;
+    if (query.linkStatus === UploadLinkStatus.LINKED) {
+      groupedMatch.linkedOrderId = { $nin: [null, ''] };
+    }
+    if (query.linkStatus === UploadLinkStatus.UNLINKED) {
+      groupedAnd.push({
+        $or: [
+          { linkedOrderId: { $exists: false } },
+          { linkedOrderId: null },
+          { linkedOrderId: '' },
+        ],
+      });
+    }
+    if (query.orderReference?.trim()) {
+      const reference = query.orderReference.trim();
+      groupedAnd.push({
+        $or: [{ linkedOrderId: reference }, { linkedOrderNumber: reference }],
+      });
+    }
     if (query.date) {
       const dateRange = this.getBangkokDayRange(query.date);
       groupedMatch.createdAt = { $gte: dateRange.start, $lt: dateRange.end };
     }
     if (query.q?.trim()) {
       const safe = query.q.trim().replace(REGEX_SPECIAL_CHARS, String.raw`\$&`);
-      groupedMatch.$or = [
-        { uploadId: { $regex: safe, $options: 'i' } },
-        { sourceIds: { $regex: safe, $options: 'i' } },
-        { orderCode: { $regex: safe, $options: 'i' } },
-        { customerName: { $regex: safe, $options: 'i' } },
-        { phone: { $regex: safe, $options: 'i' } },
-        { jobType: { $regex: safe, $options: 'i' } },
-        { category: { $regex: safe, $options: 'i' } },
-        { note: { $regex: safe, $options: 'i' } },
-        { statusNote: { $regex: safe, $options: 'i' } },
-      ];
+      groupedAnd.push({
+        $or: [
+          { uploadId: { $regex: safe, $options: 'i' } },
+          { sourceIds: { $regex: safe, $options: 'i' } },
+          { orderCode: { $regex: safe, $options: 'i' } },
+          { linkedOrderNumber: { $regex: safe, $options: 'i' } },
+          { customerName: { $regex: safe, $options: 'i' } },
+          { phone: { $regex: safe, $options: 'i' } },
+          { jobType: { $regex: safe, $options: 'i' } },
+          { category: { $regex: safe, $options: 'i' } },
+          { note: { $regex: safe, $options: 'i' } },
+          { statusNote: { $regex: safe, $options: 'i' } },
+        ],
+      });
     }
+    if (groupedAnd.length > 0) groupedMatch.$and = groupedAnd;
     if (Object.keys(groupedMatch).length > 0) {
       pipeline.push({ $match: groupedMatch });
     }
@@ -468,6 +539,73 @@ export class UploadsService {
     return this.toListItem(row);
   }
 
+  async linkUploadsToOrder(
+    uploadIds: string[],
+    orderReference?: string | null,
+  ): Promise<{
+    uploadIds: string[];
+    linkedOrderId: string | null;
+    linkedOrderNumber: string | null;
+  }> {
+    const normalizedIds = Array.from(
+      new Set(uploadIds.map((value) => value.trim()).filter(Boolean)),
+    );
+    if (normalizedIds.length === 0) {
+      throw new BadRequestException('At least one upload id is required.');
+    }
+
+    let linkedOrderId: string | null = null;
+    let linkedOrderNumber: string | null = null;
+    const reference = orderReference?.trim();
+    if (reference) {
+      const orderSelector = isValidObjectId(reference)
+        ? {
+            $or: [
+              { _id: reference },
+              { orderId: reference },
+              { orderNumber: reference },
+            ],
+          }
+        : { $or: [{ orderId: reference }, { orderNumber: reference }] };
+      const order = await this.orderModel
+        .findOne(orderSelector)
+        .select('_id orderId orderNumber')
+        .lean();
+      if (!order) {
+        throw new NotFoundException('Order not found.');
+      }
+      linkedOrderId = String(order._id);
+      linkedOrderNumber = order.orderNumber ?? order.orderId ?? linkedOrderId;
+    }
+
+    const rows = await Promise.all(
+      normalizedIds.map((id) =>
+        this.uploadModel
+          .findOne(this.selectorForUploadId(id))
+          .select('_id uploadId')
+          .lean(),
+      ),
+    );
+    if (rows.some((row) => !row)) {
+      throw new NotFoundException('One or more uploads were not found.');
+    }
+
+    const objectIds = rows.map((row) => row!._id);
+    if (linkedOrderId) {
+      await this.uploadModel.updateMany(
+        { _id: { $in: objectIds } },
+        { $set: { linkedOrderId, linkedOrderNumber } },
+      );
+    } else {
+      await this.uploadModel.updateMany(
+        { _id: { $in: objectIds } },
+        { $unset: { linkedOrderId: 1, linkedOrderNumber: 1 } },
+      );
+    }
+
+    return { uploadIds: normalizedIds, linkedOrderId, linkedOrderNumber };
+  }
+
   async deleteUploadById(id: string): Promise<boolean> {
     const selector = this.selectorForUploadId(id);
     const row = await this.uploadModel.findOne(selector).exec();
@@ -555,6 +693,8 @@ export class UploadsService {
       note?: string;
       statusNote?: string;
       batchId?: string;
+      linkedOrderId?: string;
+      linkedOrderNumber?: string;
       stage?: string;
       jobType: string;
       status: string;
@@ -602,6 +742,8 @@ export class UploadsService {
       note: doc.note ?? '',
       statusNote: doc.statusNote ?? '',
       batchId: doc.batchId ?? null,
+      linkedOrderId: doc.linkedOrderId ?? null,
+      linkedOrderNumber: doc.linkedOrderNumber ?? null,
       stage: doc.stage ?? null,
       category: doc.category ?? doc.jobType,
       jobType: doc.jobType,

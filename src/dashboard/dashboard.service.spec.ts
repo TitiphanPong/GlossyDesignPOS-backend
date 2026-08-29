@@ -35,7 +35,10 @@ describe('DashboardService', () => {
       aggregate: jest
         .fn()
         .mockResolvedValue([{ _id: 'pending', uploads: 1, files: 3 }]),
-      countDocuments: jest.fn().mockResolvedValue(7),
+      countDocuments: jest
+        .fn()
+        .mockResolvedValueOnce(7)
+        .mockResolvedValueOnce(3),
       find: jest.fn().mockReturnValue(findChain([])),
     };
     const stockItemModel = {
@@ -87,6 +90,8 @@ describe('DashboardService', () => {
       unclassifiedWorkflow: 1,
     });
     expect(summary.uploads.waitingReview).toBe(7);
+    expect(summary.uploads.unlinked).toBe(3);
+    expect(summary.capabilities.uploadOrderLink).toBe(true);
     expect(uploadModel.countDocuments).toHaveBeenCalledWith({
       status: 'pending',
     });

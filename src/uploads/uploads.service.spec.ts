@@ -3,6 +3,7 @@ import { UploadsService } from './uploads.service';
 import { JobType, UploadStage, UploadStatus } from './uploads.enums';
 import { CreateUploadDto } from './dto/create-upload.dto';
 import { UploadDocument } from './schemas/upload.schema';
+import { OrderDocument } from '../orders/orders.schema';
 import { S3Service } from './s3/s3.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import {
@@ -59,6 +60,7 @@ describe('UploadsService', () => {
       uploadModel as unknown as Model<UploadDocument>,
       s3Service as unknown as S3Service,
       createNotificationsService(),
+      {} as Model<OrderDocument>,
     );
     const dto: CreateUploadDto = {
       customerName: 'Upload Customer',
@@ -125,6 +127,7 @@ describe('UploadsService', () => {
         deleteObject,
       } as unknown as S3Service,
       createNotificationsService(),
+      {} as Model<OrderDocument>,
     );
     const dto: CreateUploadDto = {
       customerName: 'Upload Customer',
@@ -164,6 +167,7 @@ describe('UploadsService', () => {
         deleteObject,
       } as unknown as S3Service,
       createNotificationsService(),
+      {} as Model<OrderDocument>,
     );
     const dto: CreateUploadDto = {
       customerName: 'Upload Customer',
@@ -219,6 +223,7 @@ describe('UploadsService', () => {
         deleteObject,
       } as unknown as S3Service,
       createNotificationsService(),
+      {} as Model<OrderDocument>,
     );
 
     await expect(
@@ -251,6 +256,7 @@ describe('UploadsService', () => {
         deleteObject,
       } as unknown as S3Service,
       createNotificationsService(),
+      {} as Model<OrderDocument>,
     );
 
     await expect(
@@ -318,6 +324,7 @@ describe('UploadsService', () => {
         createSignedDownloadUrl,
       } as unknown as S3Service,
       createNotificationsService(),
+      {} as Model<OrderDocument>,
     );
 
     const result = await service.listUploads({
@@ -363,5 +370,124 @@ describe('UploadsService', () => {
     expect(serializedPipeline).toContain('"$or"');
     expect(serializedPipeline).toContain('"$skip":3');
     expect(serializedPipeline).toContain('"$limit":3');
+  });
+
+  it('retries a duplicate intake code without deleting uploaded S3 objects', async () => {
+    const create = jest
+      .fn()
+      .mockRejectedValueOnce({ code: 11000, keyPattern: { orderCode: 1 } })
+      .mockImplementationOnce((record: Record<string, unknown>) =>
+        Promise.resolve({ ...record, _id: '61a1c287e53a7024d4ab8142' }),
+      );
+    const deleteObject = jest.fn().mockResolvedValue(undefined);
+    const service = new UploadsService(
+      { create } as unknown as Model<UploadDocument>,
+      {
+        uploadPrivateObject: jest.fn().mockResolvedValue(undefined),
+        createSignedDownloadUrl: jest
+          .fn()
+          .mockResolvedValue('https://signed/upload'),
+        deleteObject,
+      } as unknown as S3Service,
+      createNotificationsService(),
+      {} as Model<OrderDocument>,
+    );
+
+    const result = await service.createUpload({ jobType: JobType.OTHER }, [
+      {
+        originalname: 'sample.pdf',
+        mimetype: 'application/pdf',
+        size: 12,
+        buffer: Buffer.from('hello world'),
+      },
+    ] as Express.Multer.File[]);
+
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(result.orderCode).toMatch(/^GL-\d{8}-[A-F0-9]{8}$/u);
+    expect(deleteObject).not.toHaveBeenCalled();
+  });
+
+  it('links and unlinks existing uploads through an Order relation', async () => {
+    const uploadRows = new Map([
+      [
+        '4d6b9e89-52f6-4614-aa35-fc764f29f8cb',
+        {
+          _id: '61a1c287e53a7024d4ab8142',
+          uploadId: '4d6b9e89-52f6-4614-aa35-fc764f29f8cb',
+        },
+      ],
+      [
+        '5d6b9e89-52f6-4614-aa35-fc764f29f8cb',
+        {
+          _id: '61a1c287e53a7024d4ab8143',
+          uploadId: '5d6b9e89-52f6-4614-aa35-fc764f29f8cb',
+        },
+      ],
+    ]);
+    const findOne = jest.fn((selector: Record<string, unknown>) => ({
+      select: jest.fn().mockReturnThis(),
+      lean: jest
+        .fn()
+        .mockResolvedValue(uploadRows.get(String(selector.uploadId)) ?? null),
+    }));
+    const updateMany = jest.fn().mockResolvedValue({ modifiedCount: 2 });
+    const orderModel = {
+      findOne: jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue({
+          _id: '71a1c287e53a7024d4ab8142',
+          orderId: '0101',
+          orderNumber: 'ORD-0101',
+        }),
+      }),
+    };
+    const service = new UploadsService(
+      { findOne, updateMany } as unknown as Model<UploadDocument>,
+      {} as S3Service,
+      createNotificationsService(),
+      orderModel as unknown as Model<OrderDocument>,
+    );
+
+    await expect(
+      service.linkUploadsToOrder(
+        [
+          '4d6b9e89-52f6-4614-aa35-fc764f29f8cb',
+          '5d6b9e89-52f6-4614-aa35-fc764f29f8cb',
+        ],
+        'ORD-0101',
+      ),
+    ).resolves.toEqual({
+      uploadIds: [
+        '4d6b9e89-52f6-4614-aa35-fc764f29f8cb',
+        '5d6b9e89-52f6-4614-aa35-fc764f29f8cb',
+      ],
+      linkedOrderId: '71a1c287e53a7024d4ab8142',
+      linkedOrderNumber: 'ORD-0101',
+    });
+    expect(updateMany).toHaveBeenLastCalledWith(
+      {
+        _id: { $in: ['61a1c287e53a7024d4ab8142', '61a1c287e53a7024d4ab8143'] },
+      },
+      {
+        $set: {
+          linkedOrderId: '71a1c287e53a7024d4ab8142',
+          linkedOrderNumber: 'ORD-0101',
+        },
+      },
+    );
+
+    await service.linkUploadsToOrder(
+      [
+        '4d6b9e89-52f6-4614-aa35-fc764f29f8cb',
+        '5d6b9e89-52f6-4614-aa35-fc764f29f8cb',
+      ],
+      null,
+    );
+    expect(updateMany).toHaveBeenLastCalledWith(
+      {
+        _id: { $in: ['61a1c287e53a7024d4ab8142', '61a1c287e53a7024d4ab8143'] },
+      },
+      { $unset: { linkedOrderId: 1, linkedOrderNumber: 1 } },
+    );
   });
 });

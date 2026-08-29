@@ -20,6 +20,7 @@ import { CreateUploadDto } from './dto/create-upload.dto';
 import { UploadResponseDto } from './dto/upload-response.dto';
 import { ListUploadsQueryDto } from './dto/list-uploads-query.dto';
 import { UpdateUploadDto } from './dto/update-upload.dto';
+import { LinkUploadOrderDto } from './dto/link-upload-order.dto';
 import {
   MAX_FILE_SIZE_BYTES,
   MAX_UPLOAD_REQUEST_BYTES,
@@ -75,6 +76,28 @@ export class UploadsController {
       throw new NotFoundException('Upload not found');
     }
     return signed;
+  }
+
+  @Patch('link-order')
+  async linkUploadsToOrder(
+    @Body() dto: LinkUploadOrderDto,
+    @Request() request: AuthRequest,
+  ) {
+    const result = await this.uploadsService.linkUploadsToOrder(
+      dto.uploadIds,
+      dto.orderReference,
+    );
+    await this.auditService.record(
+      request.user ?? null,
+      result.linkedOrderId ? 'upload.order_link' : 'upload.order_unlink',
+      { type: 'upload_batch', id: dto.uploadIds.join(',') },
+      {
+        count: dto.uploadIds.length,
+        orderId: result.linkedOrderId ?? '',
+        orderNumber: result.linkedOrderNumber ?? '',
+      },
+    );
+    return result;
   }
 
   @Patch(':id')

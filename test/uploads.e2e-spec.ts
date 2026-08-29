@@ -110,6 +110,19 @@ describe('UploadsController (e2e)', () => {
     );
   });
 
+  it('POST /uploads rejects attempts to attach an Order from the public intake form', async () => {
+    await request(server)
+      .post('/uploads')
+      .field('customerName', 'Upload Customer')
+      .field('phone', '0000000000')
+      .field('jobType', JobType.DOCUMENT_PRINTING)
+      .field('orderReference', 'ORD-0101')
+      .attach('files', Buffer.from('%PDF-1.7\nfake pdf content'), 'sample.pdf')
+      .expect(400);
+
+    expect(createUpload).not.toHaveBeenCalled();
+  });
+
   it('POST /uploads invalid type', async () => {
     await request(server)
       .post('/uploads')

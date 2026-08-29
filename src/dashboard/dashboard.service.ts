@@ -59,6 +59,7 @@ export class DashboardService {
       filesWaiting,
       recentUploads,
       lowStock,
+      unlinkedUploads,
     ] = await Promise.all([
       this.orderReporting.getDashboardMetrics(query),
       this.orderModel.aggregate<StatusRow>([
@@ -122,6 +123,13 @@ export class DashboardService {
         active: true,
         $expr: { $lte: ['$onHand', '$minimumLevel'] },
       }),
+      this.uploadModel.countDocuments({
+        $or: [
+          { linkedOrderId: { $exists: false } },
+          { linkedOrderId: null },
+          { linkedOrderId: '' },
+        ],
+      }),
     ]);
 
     const status = Object.fromEntries(
@@ -179,7 +187,7 @@ export class DashboardService {
         newFiles: uploadRows.reduce((sum, row) => sum + row.files, 0),
         newUploads: uploadRows.reduce((sum, row) => sum + row.uploads, 0),
         waitingReview: filesWaiting,
-        unlinked: 0,
+        unlinked: unlinkedUploads,
       },
       outstandingAging: {
         total: outstanding,
@@ -222,7 +230,7 @@ export class DashboardService {
       capabilities: {
         dueDates: false,
         urgentFlag: false,
-        uploadOrderLink: false,
+        uploadOrderLink: true,
       },
     };
   }
