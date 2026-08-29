@@ -68,6 +68,46 @@ describe('CustomersService', () => {
     );
   });
 
+  it('clears nullable profile fields explicitly while preserving PATCH semantics for omitted fields', async () => {
+    const customerId = new Types.ObjectId();
+    const exec = jest.fn().mockResolvedValue({
+      _id: customerId,
+      customerCode: 'CUS-1',
+      displayName: 'Customer',
+    });
+    let capturedUpdate: unknown;
+    const findByIdAndUpdate = jest.fn((_id: unknown, update: unknown) => {
+      capturedUpdate = update;
+      return { exec };
+    });
+    const service = new CustomersService(
+      { findByIdAndUpdate } as unknown as Model<CustomerDocument>,
+      {} as Model<OrderDocument>,
+      {} as Model<ProductionJobDocument>,
+      {} as Model<UploadDocument>,
+    );
+
+    await service.update(String(customerId), {
+      email: null,
+      companyName: null,
+      phoneNumbers: [],
+    } as unknown as Parameters<CustomersService['update']>[1]);
+
+    expect(findByIdAndUpdate).toHaveBeenCalledTimes(1);
+    const update = capturedUpdate as {
+      $set?: Record<string, unknown>;
+      $unset?: Record<string, unknown>;
+    };
+    expect(update.$set?.phoneNumbers).toEqual([]);
+    expect(update.$set).not.toHaveProperty('email');
+    expect(update.$set).not.toHaveProperty('companyName');
+    expect(update.$unset).toEqual({
+      email: 1,
+      companyName: 1,
+      phoneNumber: 1,
+    });
+  });
+
   it('derives detail aggregates from authoritative linked records without copying them into customer data', async () => {
     const customerId = new Types.ObjectId();
     const orderId = new Types.ObjectId();
@@ -111,6 +151,11 @@ describe('CustomersService', () => {
       } as unknown as Model<CustomerDocument>,
       {
         find: jest.fn().mockReturnValue(orderFind),
+        aggregate: jest.fn().mockReturnValue({
+          exec: jest
+            .fn()
+            .mockResolvedValue([{ orderCount: 2, outstandingTotal: 125.5 }]),
+        }),
       } as unknown as Model<OrderDocument>,
       {
         find: jest.fn().mockReturnValue(jobFind),
@@ -153,6 +198,7 @@ describe('CustomersService', () => {
     });
 
     expect(JSON.stringify(capturedFilter)).toContain('displayName');
+    expect(JSON.stringify(capturedFilter)).toContain('companyName');
     expect(JSON.stringify(capturedFilter)).toContain('phoneNumbers');
     expect(JSON.stringify(capturedFilter)).toContain('"active":true');
     expect(findResult.skip).toHaveBeenCalledWith(10);

@@ -46,6 +46,7 @@ export class CustomersService {
       filter.$or = [
         { customerCode: { $regex: safe, $options: 'i' } },
         { displayName: { $regex: safe, $options: 'i' } },
+        { companyName: { $regex: safe, $options: 'i' } },
         { phoneNumber: { $regex: safe, $options: 'i' } },
         { phoneNumbers: { $regex: safe, $options: 'i' } },
         { email: { $regex: safe, $options: 'i' } },
@@ -92,6 +93,28 @@ export class CustomersService {
     const rest: Record<string, unknown> = { ...dto };
     delete rest.phoneNumber;
     delete rest.phoneNumbers;
+
+    const unsetFields: Record<string, 1> = {};
+    const clearableFields = [
+      'email',
+      'taxId',
+      'companyName',
+      'address',
+      'branchType',
+      'branchNo',
+      'subDistrict',
+      'district',
+      'province',
+      'postalCode',
+      'shippingAddress',
+    ] as const;
+    for (const field of clearableFields) {
+      if (rest[field] === null) {
+        delete rest[field];
+        unsetFields[field] = 1;
+      }
+    }
+
     const phoneFields = shouldUpdatePhones
       ? this.normalizePhoneFields(dto)
       : undefined;
@@ -102,7 +125,10 @@ export class CustomersService {
       },
     };
     if (phoneFields && !phoneFields.phoneNumber) {
-      update.$unset = { phoneNumber: 1 };
+      unsetFields.phoneNumber = 1;
+    }
+    if (Object.keys(unsetFields).length > 0) {
+      update.$unset = unsetFields;
     }
     const updated = await this.customerModel
       .findByIdAndUpdate(id, update, { new: true, runValidators: true })
@@ -116,15 +142,38 @@ export class CustomersService {
     const customer = await this.customerModel.findById(id).lean().exec();
     if (!customer) throw new NotFoundException('Customer not found.');
     const customerObjectId = new Types.ObjectId(id);
-    const orders = await this.orderModel
-      .find({ customerId: customerObjectId })
-      .select(
-        '_id orderNumber orderId saleDate createdAt grandTotal paidAmount remainingTotal status workflowStatus taxInvoice',
-      )
-      .sort({ createdAt: -1 })
-      .limit(100)
-      .lean()
-      .exec();
+    const [orders, summaryRows] = await Promise.all([
+      this.orderModel
+        .find({ customerId: customerObjectId })
+        .select(
+          '_id orderNumber orderId saleDate createdAt grandTotal paidAmount remainingTotal status workflowStatus taxInvoice',
+        )
+        .sort({ createdAt: -1 })
+        .limit(100)
+        .lean()
+        .exec(),
+      this.orderModel
+        .aggregate<{ orderCount: number; outstandingTotal: number }>([
+          { $match: { customerId: customerObjectId } },
+          {
+            $group: {
+              _id: null,
+              orderCount: { $sum: 1 },
+              outstandingTotal: {
+                $sum: {
+                  $cond: [
+                    { $ne: ['$status', 'cancelled'] },
+                    { $ifNull: ['$remainingTotal', 0] },
+                    0,
+                  ],
+                },
+              },
+            },
+          },
+          { $project: { _id: 0, orderCount: 1, outstandingTotal: 1 } },
+        ])
+        .exec(),
+    ]);
     const orderIds = orders.map((order) => order._id);
     const orderIdStrings = orderIds.map((value) => String(value));
     const [jobs, uploads] = await Promise.all([
@@ -152,16 +201,13 @@ export class CustomersService {
             .exec()
         : [],
     ]);
-    const outstandingTotal = orders.reduce(
-      (sum, order) =>
-        order.status === 'cancelled'
-          ? sum
-          : sum + Number(order.remainingTotal || 0),
-      0,
-    );
+    const summary = summaryRows[0] ?? { orderCount: 0, outstandingTotal: 0 };
     return {
       customer,
-      summary: { orderCount: orders.length, outstandingTotal },
+      summary: {
+        orderCount: Number(summary.orderCount || 0),
+        outstandingTotal: Number(summary.outstandingTotal || 0),
+      },
       orders,
       activeProductionJobs: jobs,
       linkedUploads: uploads,
