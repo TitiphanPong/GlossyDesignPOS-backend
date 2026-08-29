@@ -32,9 +32,9 @@ describe('NotificationsService action center', () => {
         priority: 'normal',
       }),
       notification({
-        _id: 'late',
-        type: 'order_overdue',
-        entityType: 'order',
+        _id: 'failed',
+        type: 'payment_failed',
+        entityType: 'payment',
         amount: undefined,
         priority: 'critical',
         createdAt: new Date('2026-08-27T09:00:00.000Z'),
@@ -62,6 +62,7 @@ describe('NotificationsService action center', () => {
     expect(filter?.status).toBe('active');
     expect(filter?.type.$in).toContain('payment_outstanding');
     expect(filter?.type.$in).not.toContain('order_created');
+    expect(filter?.type.$in).not.toContain('order_overdue');
     expect(result.summary).toEqual({
       total: 3,
       critical: 1,
@@ -69,7 +70,7 @@ describe('NotificationsService action center', () => {
       filesWaiting: 1,
     });
     expect(result.items.map((item) => item._id)).toEqual([
-      'late',
+      'failed',
       'payment',
       'upload',
     ]);
@@ -202,5 +203,81 @@ describe('NotificationsService action center', () => {
     });
     expect(resolveUpdate.$set.status).toBe('resolved');
     expect(resolveUpdate.$set.resolvedAt).toBeInstanceOf(Date);
+  });
+
+  it.each([
+    ['outstanding balance', 'partial', 125],
+    ['fully paid balance', 'paid', 0],
+  ] as const)(
+    'resolves ready/pickup actions when workflow is delivered with %s',
+    async (_label, financialStatus, remainingTotal) => {
+      const order = {
+        workflowStatus: 'delivered',
+        status: financialStatus,
+        remainingTotal,
+        statusHistory: [],
+      } as unknown as OrderDocument;
+      const findById = jest.fn().mockResolvedValue(order);
+      const updateMany = jest.fn().mockResolvedValue({ modifiedCount: 1 });
+      const service = new NotificationsService(
+        { updateMany } as unknown as Model<NotificationDocument>,
+        { findById } as unknown as Model<OrderDocument>,
+        {} as Model<StockItemDocument>,
+      );
+
+      await service.autoResolvePickupNotifications('order-1');
+
+      const [filter, update] = updateMany.mock.calls[0] as unknown as [
+        Record<string, unknown>,
+        { $set: { status: string; resolvedAt: Date } },
+      ];
+      expect(filter).toEqual({
+        orderId: 'order-1',
+        type: { $in: ['order_ready_for_pickup', 'order_pickup_delayed'] },
+        status: 'active',
+      });
+      expect(update.$set.status).toBe('resolved');
+      expect(update.$set.resolvedAt).toBeInstanceOf(Date);
+    },
+  );
+
+  it('does not treat financial paid status as a delivered production milestone', async () => {
+    const order = {
+      workflowStatus: 'ready_for_pickup',
+      status: 'paid',
+      remainingTotal: 0,
+      statusHistory: [],
+    } as unknown as OrderDocument;
+    const findById = jest.fn().mockResolvedValue(order);
+    const updateMany = jest.fn();
+    const service = new NotificationsService(
+      { updateMany } as unknown as Model<NotificationDocument>,
+      { findById } as unknown as Model<OrderDocument>,
+      {} as Model<StockItemDocument>,
+    );
+
+    await service.autoResolvePickupNotifications('order-1');
+
+    expect(updateMany).not.toHaveBeenCalled();
+  });
+
+  it('keeps legacy age-based overdue and unconfirmed notification rules dormant', async () => {
+    const orderFind = jest.fn();
+    const notificationFindOne = jest.fn();
+    const service = new NotificationsService(
+      {
+        findOne: notificationFindOne,
+      } as unknown as Model<NotificationDocument>,
+      { find: orderFind } as unknown as Model<OrderDocument>,
+      {} as Model<StockItemDocument>,
+    );
+    const createSpy = jest.spyOn(service, 'createNotification');
+
+    await service.checkAndNotifyOverdueOrders();
+    await service.checkAndNotifyUnconfirmedOrders();
+
+    expect(orderFind).not.toHaveBeenCalled();
+    expect(notificationFindOne).not.toHaveBeenCalled();
+    expect(createSpy).not.toHaveBeenCalled();
   });
 });

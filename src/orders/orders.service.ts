@@ -1431,10 +1431,16 @@ export class OrdersService {
       this.ordersSse.emitOrder(null);
     }
 
+    const workflowStatus = ORDER_WORKFLOW_STATUSES.includes(
+      status as OrderWorkflowStatus,
+    )
+      ? (status as OrderWorkflowStatus)
+      : response.workflowStatus;
+
     void this.notificationsService
       .handleOrderStatusChange({
         _id: response._id,
-        status,
+        status: workflowStatus,
         orderNumber: response.orderNumber,
         customerName: response.customerName,
       })

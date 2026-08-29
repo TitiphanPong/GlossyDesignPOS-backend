@@ -19,8 +19,11 @@ import {
   NotificationCountDto,
   ActionCenterDto,
 } from './dto/notification.dto';
-import { Order } from '../orders/orders.schema';
-import type { OrderDocument, OrderStatus } from '../orders/orders.schema';
+import { Order, ORDER_WORKFLOW_STATUSES } from '../orders/orders.schema';
+import type {
+  OrderDocument,
+  OrderWorkflowStatus,
+} from '../orders/orders.schema';
 import type { UploadDocument } from '../uploads/schemas/upload.schema';
 import { StockItem } from '../inventory/schemas/stock-item.schema';
 import type { StockItemDocument } from '../inventory/schemas/stock-item.schema';
@@ -49,7 +52,7 @@ interface CreateNotificationOptions {
 
 type OrderStatusNotification = {
   _id: string;
-  status: OrderStatus;
+  status: OrderWorkflowStatus;
   orderNumber?: string;
   customerName: string;
 };
@@ -57,7 +60,6 @@ type OrderStatusNotification = {
 const ACTION_CENTER_TYPES: readonly NotificationType[] = [
   'payment_outstanding',
   'payment_failed',
-  'order_overdue',
   'order_ready_for_pickup',
   'order_pickup_delayed',
   'upload_review_required',
@@ -410,14 +412,14 @@ export class NotificationsService {
   }
 
   /**
-   * Auto-resolve order ready notifications when picked up
+   * Auto-resolve order ready notifications from production workflow truth.
+   * Financial payment state is intentionally independent from pickup lifecycle.
    */
   async autoResolvePickupNotifications(orderId: string): Promise<void> {
     const order = await this.orderModel.findById(orderId);
     if (!order) return;
 
-    // If order status is delivered/completed
-    if (['delivered', 'paid'].includes(order.status)) {
+    if (this.resolveEffectiveWorkflowStatus(order) === 'delivered') {
       await this.notificationModel.updateMany(
         {
           orderId,
@@ -514,9 +516,7 @@ export class NotificationsService {
         break;
       }
 
-      case 'delivered':
-      case 'paid': {
-        // Auto-resolve pickup notifications
+      case 'delivered': {
         await this.autoResolvePickupNotifications(orderId);
         break;
       }
@@ -550,91 +550,46 @@ export class NotificationsService {
   }
 
   /**
-   * Check for overdue orders
+   * @deprecated Deferred until Production Jobs define a real dueAt/SLA model.
+   * The previous createdAt-based 30-minute heuristic must not create Action Center state.
    */
   async checkAndNotifyOverdueOrders(): Promise<void> {
-    // This would typically be called by a scheduled task
-    // For now, we check orders that are in production but have old creation date
-    const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
-
-    const overdueOrders = await this.orderModel.find({
-      status: { $in: ['pending', 'producing'] },
-      createdAt: { $lt: thirtyMinutesAgo },
-    });
-
-    for (const order of overdueOrders) {
-      const orderId = String(order._id);
-      const key = `order_overdue:${orderId}`;
-
-      // Check if notification already exists
-      const existing = await this.notificationModel.findOne({
-        notificationKey: key,
-        status: 'active',
-      });
-
-      if (!existing) {
-        await this.createNotification({
-          type: 'order_overdue',
-          category: 'action_required',
-          priority: 'critical',
-          title: `งาน #${order.orderNumber} ล่าช้า`,
-          message: `${order.customerName} - ${order.cart[0]?.name}`,
-          orderId,
-          orderCode: order.orderNumber,
-          customerName: order.customerName,
-          entityType: 'order',
-          entityId: orderId,
-          notificationKey: key,
-          action: {
-            label: 'อัปเดตสถานะ',
-            action: 'open_order',
-          },
-        });
-      }
-    }
+    return Promise.resolve();
   }
 
   /**
-   * Check for unconfirmed orders
+   * @deprecated Deferred until an explicit confirmation/due-date workflow exists.
+   * The previous createdAt-based one-hour heuristic must not create Action Center state.
    */
   async checkAndNotifyUnconfirmedOrders(): Promise<void> {
-    // Orders waiting for confirmation
-    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+    return Promise.resolve();
+  }
 
-    const unconfirmed = await this.orderModel.find({
-      status: 'pending',
-      createdAt: { $lt: oneHourAgo },
-    });
+  private resolveEffectiveWorkflowStatus(
+    order: OrderDocument,
+  ): OrderWorkflowStatus | null {
+    const workflowStatuses = new Set<OrderWorkflowStatus>(
+      ORDER_WORKFLOW_STATUSES,
+    );
 
-    for (const order of unconfirmed) {
-      const orderId = String(order._id);
-      const key = `order_pending_confirm:${orderId}`;
+    if (order.workflowStatus && workflowStatuses.has(order.workflowStatus)) {
+      return order.workflowStatus;
+    }
 
-      const existing = await this.notificationModel.findOne({
-        notificationKey: key,
-        status: 'active',
-      });
-
-      if (!existing) {
-        await this.createNotification({
-          type: 'order_created',
-          category: 'action_required',
-          priority: 'high',
-          title: `รายการขายใหม่ #${order.orderNumber}`,
-          message: `${order.customerName} รอการยืนยัน`,
-          orderId,
-          orderCode: order.orderNumber,
-          customerName: order.customerName,
-          entityType: 'order',
-          entityId: orderId,
-          notificationKey: key,
-          action: {
-            label: 'เปิดรายการ',
-            action: 'open_order',
-          },
-        });
+    const statusHistory = order.statusHistory ?? [];
+    for (let index = statusHistory.length - 1; index >= 0; index -= 1) {
+      const historicalStatus = statusHistory[index]?.status;
+      if (
+        historicalStatus &&
+        workflowStatuses.has(historicalStatus as OrderWorkflowStatus)
+      ) {
+        return historicalStatus as OrderWorkflowStatus;
       }
     }
+
+    return workflowStatuses.has(order.status as OrderWorkflowStatus)
+      ? (order.status as OrderWorkflowStatus)
+      : null;
   }
 
   private toResponseDto(
