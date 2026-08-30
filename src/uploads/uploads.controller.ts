@@ -82,6 +82,7 @@ export class UploadsController {
         customerName: identity.displayName,
         lineUserId: identity.userId,
         displayName: identity.displayName,
+        linePictureUrl: identity.pictureUrl,
       };
     }
 

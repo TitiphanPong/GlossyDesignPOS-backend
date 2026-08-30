@@ -57,4 +57,5 @@ export class CreateUploadDto {
 export type VerifiedCreateUploadDto = Omit<CreateUploadDto, 'lineIdToken'> & {
   lineUserId?: string;
   displayName?: string;
+  linePictureUrl?: string;
 };

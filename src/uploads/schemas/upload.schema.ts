@@ -24,6 +24,9 @@ export class Upload {
   @Prop({ maxlength: 120 })
   displayName?: string;
 
+  @Prop({ maxlength: 2048 })
+  linePictureUrl?: string;
+
   @Prop()
   category?: string;
 

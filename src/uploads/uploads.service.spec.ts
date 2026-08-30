@@ -1,7 +1,10 @@
 import { Model, PipelineStage } from 'mongoose';
 import { UploadsService } from './uploads.service';
 import { JobType, UploadStage, UploadStatus } from './uploads.enums';
-import { CreateUploadDto } from './dto/create-upload.dto';
+import {
+  CreateUploadDto,
+  VerifiedCreateUploadDto,
+} from './dto/create-upload.dto';
 import { UploadDocument } from './schemas/upload.schema';
 import { OrderDocument } from '../orders/orders.schema';
 import { S3Service } from './s3/s3.service';
@@ -62,9 +65,12 @@ describe('UploadsService', () => {
       createNotificationsService(),
       {} as Model<OrderDocument>,
     );
-    const dto: CreateUploadDto = {
+    const dto: VerifiedCreateUploadDto = {
       customerName: 'Upload Customer',
       phone: '0000000000',
+      lineUserId: 'Uupload123',
+      displayName: 'Upload LINE',
+      linePictureUrl: 'https://profile.line-scdn.net/upload',
       jobType: JobType.DOCUMENT_PRINTING,
       note: [
         '[[batch:4d6b9e89-52f6-4614-aa35-fc764f29f8cb]]',
@@ -96,6 +102,9 @@ describe('UploadsService', () => {
       expect.objectContaining({
         customerName: dto.customerName,
         phone: dto.phone,
+        lineUserId: dto.lineUserId,
+        displayName: dto.displayName,
+        linePictureUrl: dto.linePictureUrl,
         jobType: dto.jobType,
         note: dto.note,
         statusNote: dto.statusNote,
@@ -278,6 +287,9 @@ describe('UploadsService', () => {
             sourceIds: ['upload-1', 'upload-2'],
             orderCode: 'GL-20260827-1001',
             customerName: 'Alpha',
+            displayName: 'Alpha LINE',
+            lineUserId: 'Ualpha123',
+            linePictureUrl: 'https://profile.line-scdn.net/alpha',
             phone: '0812345678',
             jobType: JobType.OTHER,
             status: UploadStatus.PENDING,
@@ -348,6 +360,9 @@ describe('UploadsService', () => {
       expect.objectContaining({
         uploadId: 'upload-1',
         sourceIds: ['upload-1', 'upload-2'],
+        displayName: 'Alpha LINE',
+        lineUserId: 'Ualpha123',
+        linePictureUrl: 'https://profile.line-scdn.net/alpha',
         storageStatus: StorageListStatus.WAITING,
       }),
     );
@@ -368,6 +383,8 @@ describe('UploadsService', () => {
     expect(serializedPipeline).toContain('"$gte"');
     expect(serializedPipeline).toContain('"$lt"');
     expect(serializedPipeline).toContain('"$or"');
+    expect(serializedPipeline).toContain('"displayName"');
+    expect(serializedPipeline).toContain('"lineUserId"');
     expect(serializedPipeline).toContain('"$skip":3');
     expect(serializedPipeline).toContain('"$limit":3');
   });

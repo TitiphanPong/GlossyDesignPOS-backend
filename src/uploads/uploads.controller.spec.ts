@@ -10,6 +10,7 @@ describe('UploadsController LINE intake', () => {
     const verifyIdToken = jest.fn().mockResolvedValue({
       userId: 'U1234567890',
       displayName: 'LINE Customer',
+      pictureUrl: 'https://profile.line-scdn.net/example',
     });
     const controller = new UploadsController(
       { createUpload } as unknown as UploadsService,
@@ -46,6 +47,7 @@ describe('UploadsController LINE intake', () => {
         customerName: 'LINE Customer',
         lineUserId: 'U1234567890',
         displayName: 'LINE Customer',
+        linePictureUrl: 'https://profile.line-scdn.net/example',
         jobType: JobType.DOCUMENT_PRINTING,
       }),
       files,

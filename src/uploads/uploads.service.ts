@@ -96,6 +96,7 @@ export class UploadsService {
         phone: dto.phone,
         lineUserId: dto.lineUserId,
         displayName: dto.displayName,
+        linePictureUrl: dto.linePictureUrl,
         category: dto.category,
         note: dto.note,
         statusNote: dto.statusNote,
@@ -327,6 +328,7 @@ export class UploadsService {
           phone: { $first: '$phone' },
           lineUserId: { $first: '$lineUserId' },
           displayName: { $first: '$displayName' },
+          linePictureUrl: { $first: '$linePictureUrl' },
           category: { $first: '$category' },
           note: { $first: '$note' },
           statusNote: { $first: '$statusNote' },
@@ -392,6 +394,8 @@ export class UploadsService {
           { orderCode: { $regex: safe, $options: 'i' } },
           { linkedOrderNumber: { $regex: safe, $options: 'i' } },
           { customerName: { $regex: safe, $options: 'i' } },
+          { displayName: { $regex: safe, $options: 'i' } },
+          { lineUserId: { $regex: safe, $options: 'i' } },
           { phone: { $regex: safe, $options: 'i' } },
           { jobType: { $regex: safe, $options: 'i' } },
           { category: { $regex: safe, $options: 'i' } },
@@ -691,6 +695,7 @@ export class UploadsService {
       phone?: string;
       lineUserId?: string;
       displayName?: string;
+      linePictureUrl?: string;
       category?: string;
       note?: string;
       statusNote?: string;
@@ -741,6 +746,7 @@ export class UploadsService {
       phone: doc.phone ?? '',
       lineUserId: doc.lineUserId ?? '',
       displayName: doc.displayName ?? '',
+      linePictureUrl: doc.linePictureUrl ?? '',
       note: doc.note ?? '',
       statusNote: doc.statusNote ?? '',
       batchId: doc.batchId ?? null,
