@@ -24,9 +24,13 @@ import {
   ProductionJobDocument,
   ProductionJobStage,
 } from './schemas/production-job.schema';
+import {
+  COMPLETE_PRODUCTION_JOB_STAGES,
+  bangkokProductionDayBounds,
+  incompleteProductionJobMatch,
+} from './production-urgency';
 
 const BANGKOK_OFFSET_MS = 7 * 60 * 60 * 1000;
-const DAY_MS = 24 * 60 * 60 * 1000;
 const NEXT_STAGE: Partial<Record<ProductionJobStage, ProductionJobStage>> = {
   file_check: 'queued',
   queued: 'producing',
@@ -45,7 +49,9 @@ const CUSTOMER_MILESTONE_BY_STAGE: Record<
   ready: 'ready',
   delivered: 'completed',
 };
-const COMPLETE_STAGES = new Set<ProductionJobStage>(['ready', 'delivered']);
+const COMPLETE_STAGES = new Set<ProductionJobStage>(
+  COMPLETE_PRODUCTION_JOB_STAGES,
+);
 
 @Injectable()
 export class ProductionService {
@@ -124,6 +130,8 @@ export class ProductionService {
       baseMatch.jobType = { $regex: `^${escapedJobType}$`, $options: 'i' };
     }
     if (query.assigneeUserId) baseMatch.assigneeUserId = query.assigneeUserId;
+    if (query.active === true)
+      Object.assign(baseMatch, incompleteProductionJobMatch());
 
     if (query.due && query.due !== 'all') {
       const now = new Date();
@@ -131,7 +139,7 @@ export class ProductionService {
         baseMatch.dueAt = { $lt: now };
         baseMatch.stage = { $nin: ['ready', 'delivered'] };
       } else {
-        const { start, end } = this.bangkokDayBounds(now);
+        const { start, end } = bangkokProductionDayBounds(now);
         baseMatch.dueAt = { $gte: start, $lt: end };
       }
     }
@@ -371,19 +379,6 @@ export class ProductionService {
     if (!Number.isFinite(parsed.getTime()))
       throw new BadRequestException('Invalid dueAt.');
     return parsed;
-  }
-
-  private bangkokDayBounds(now: Date) {
-    const bangkokNow = new Date(now.getTime() + BANGKOK_OFFSET_MS);
-    const utcDay = Date.UTC(
-      bangkokNow.getUTCFullYear(),
-      bangkokNow.getUTCMonth(),
-      bangkokNow.getUTCDate(),
-    );
-    return {
-      start: new Date(utcDay - BANGKOK_OFFSET_MS),
-      end: new Date(utcDay - BANGKOK_OFFSET_MS + DAY_MS),
-    };
   }
 
   private formatBangkok(value: Date) {

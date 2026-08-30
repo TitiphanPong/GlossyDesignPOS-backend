@@ -44,6 +44,20 @@ describe('DashboardService', () => {
     const stockItemModel = {
       countDocuments: jest.fn().mockResolvedValue(4),
     };
+    let capturedProductionPipeline: unknown;
+    const productionJobModel = {
+      aggregate: jest.fn((pipeline: unknown) => {
+        capturedProductionPipeline = pipeline;
+        return Promise.resolve([
+          {
+            dueToday: [{ count: 4 }],
+            overdue: [{ count: 2 }],
+            rush: [{ count: 3 }],
+            urgent: [{ count: 6 }],
+          },
+        ]);
+      }),
+    };
     const orderReporting = {
       getDashboardMetrics: jest.fn().mockResolvedValue({
         period: {
@@ -77,6 +91,7 @@ describe('DashboardService', () => {
       orderModel as never,
       uploadModel as never,
       stockItemModel as never,
+      productionJobModel as never,
       orderReporting as never,
     );
 
@@ -84,6 +99,7 @@ describe('DashboardService', () => {
 
     expect(summary.operations).toEqual({
       workflow: { pending: 2, producing: 3, ready_for_pickup: 1 },
+      production: { dueToday: 4, overdue: 2, rush: 3 },
       outstanding: { orders: 3, amount: 350.25 },
       filesWaiting: 7,
       lowStock: 4,
@@ -91,7 +107,19 @@ describe('DashboardService', () => {
     });
     expect(summary.uploads.waitingReview).toBe(7);
     expect(summary.uploads.unlinked).toBe(3);
-    expect(summary.capabilities.uploadOrderLink).toBe(true);
+    expect(summary.today.urgentJobs).toBe(6);
+    expect(summary.capabilities).toEqual({
+      dueDates: true,
+      urgentFlag: true,
+      uploadOrderLink: true,
+    });
+    expect(productionJobModel.aggregate).toHaveBeenCalledTimes(1);
+    const productionPipeline = JSON.stringify(capturedProductionPipeline);
+    expect(productionPipeline).toContain('ready');
+    expect(productionPipeline).toContain('delivered');
+    expect(productionPipeline).toContain('dueToday');
+    expect(productionPipeline).toContain('overdue');
+    expect(productionPipeline).toContain('rush');
     expect(uploadModel.countDocuments).toHaveBeenCalledWith({
       status: 'pending',
     });

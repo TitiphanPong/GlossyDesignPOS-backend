@@ -1,7 +1,9 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
+import type { TransformFnParams } from 'class-transformer';
 import {
   ArrayMaxSize,
   IsArray,
+  IsBoolean,
   IsDateString,
   IsIn,
   IsInt,
@@ -128,6 +130,15 @@ export class ListProductionJobsQueryDto {
   @IsOptional()
   @IsString()
   assigneeUserId?: string;
+
+  @IsOptional()
+  @Transform(({ value }: TransformFnParams): unknown => {
+    if (value === 'true') return true;
+    if (value === 'false') return false;
+    return value as unknown;
+  })
+  @IsBoolean()
+  active?: boolean;
 
   @IsOptional()
   @IsIn(['all', 'today', 'overdue'])

@@ -12,9 +12,25 @@ import {
   StockItem,
   StockItemDocument,
 } from '../inventory/schemas/stock-item.schema';
+import {
+  ProductionJob,
+  ProductionJobDocument,
+} from '../production/schemas/production-job.schema';
+import { incompleteProductionJobMatch } from '../production/production-urgency';
 
 type StatusRow = { _id: string; count: number; unclassified?: number };
 type AgingRow = { _id: string; total: number; orders: number };
+type CountFacet = Array<{ count: number }>;
+type ProductionUrgencyRow = {
+  dueToday: CountFacet;
+  overdue: CountFacet;
+  rush: CountFacet;
+  urgent: CountFacet;
+};
+
+function facetCount(rows: CountFacet | undefined): number {
+  return rows?.[0]?.count ?? 0;
+}
 
 const DAY_MS = 86_400_000;
 const BANGKOK_OFFSET_MS = 7 * 60 * 60 * 1000;
@@ -43,11 +59,14 @@ export class DashboardService {
     private readonly uploadModel: Model<UploadDocument>,
     @InjectModel(StockItem.name)
     private readonly stockItemModel: Model<StockItemDocument>,
+    @InjectModel(ProductionJob.name)
+    private readonly productionJobModel: Model<ProductionJobDocument>,
     private readonly orderReporting: OrderReportingService,
   ) {}
 
   async getSummary(query: DashboardSummaryQueryDto = {}) {
-    const todayStart = bangkokDayStart();
+    const now = new Date();
+    const todayStart = bangkokDayStart(now);
     const tomorrowStart = new Date(todayStart.getTime() + DAY_MS);
     const [
       metrics,
@@ -58,6 +77,7 @@ export class DashboardService {
       uploadRows,
       filesWaiting,
       recentUploads,
+      productionUrgencyRows,
       lowStock,
       unlinkedUploads,
     ] = await Promise.all([
@@ -119,6 +139,30 @@ export class DashboardService {
         .limit(5)
         .select('uploadId customerName status files createdAt')
         .lean(),
+      this.productionJobModel.aggregate<ProductionUrgencyRow>([
+        { $match: incompleteProductionJobMatch() },
+        {
+          $facet: {
+            dueToday: [
+              { $match: { dueAt: { $gte: todayStart, $lt: tomorrowStart } } },
+              { $count: 'count' },
+            ],
+            overdue: [{ $match: { dueAt: { $lt: now } } }, { $count: 'count' }],
+            rush: [{ $match: { priority: 'rush' } }, { $count: 'count' }],
+            urgent: [
+              {
+                $match: {
+                  $or: [
+                    { dueAt: { $lt: tomorrowStart } },
+                    { priority: 'rush' },
+                  ],
+                },
+              },
+              { $count: 'count' },
+            ],
+          },
+        },
+      ]),
       this.stockItemModel.countDocuments({
         active: true,
         $expr: { $lte: ['$onHand', '$minimumLevel'] },
@@ -149,6 +193,13 @@ export class DashboardService {
         workflowRows.find((row) => row._id === key)?.count ?? 0,
       ]),
     );
+    const productionUrgencyRow = productionUrgencyRows[0];
+    const production = {
+      dueToday: facetCount(productionUrgencyRow?.dueToday),
+      overdue: facetCount(productionUrgencyRow?.overdue),
+      rush: facetCount(productionUrgencyRow?.rush),
+    };
+    const urgentJobs = facetCount(productionUrgencyRow?.urgent);
 
     return {
       generatedAt: new Date().toISOString(),
@@ -161,7 +212,7 @@ export class DashboardService {
         orders: metrics.periodSummary.orders,
         customers: metrics.periodSummary.customers,
         outstanding,
-        urgentJobs: 0,
+        urgentJobs,
         yesterdaySales: metrics.periodSummary.previousSales,
         yesterdayOrders: metrics.periodSummary.previousOrders,
       },
@@ -169,6 +220,7 @@ export class DashboardService {
       orderStatus: status,
       operations: {
         workflow,
+        production,
         outstanding: {
           orders: outstandingOrders,
           amount: outstanding,
@@ -228,8 +280,8 @@ export class DashboardService {
         )
         .slice(0, 8),
       capabilities: {
-        dueDates: false,
-        urgentFlag: false,
+        dueDates: true,
+        urgentFlag: true,
         uploadOrderLink: true,
       },
     };

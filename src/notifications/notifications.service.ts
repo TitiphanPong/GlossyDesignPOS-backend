@@ -27,6 +27,11 @@ import type {
 import type { UploadDocument } from '../uploads/schemas/upload.schema';
 import { StockItem } from '../inventory/schemas/stock-item.schema';
 import type { StockItemDocument } from '../inventory/schemas/stock-item.schema';
+import {
+  ProductionJob,
+  ProductionJobDocument,
+} from '../production/schemas/production-job.schema';
+import { incompleteProductionJobMatch } from '../production/production-urgency';
 
 interface CreateNotificationOptions {
   type: NotificationType;
@@ -40,7 +45,7 @@ interface CreateNotificationOptions {
   amount?: number;
   dueDate?: Date;
   relatedUploadId?: string;
-  entityType?: 'order' | 'upload' | 'payment' | 'stock';
+  entityType?: 'order' | 'upload' | 'payment' | 'stock' | 'production_job';
   entityId?: string;
   action?: {
     label: string;
@@ -62,6 +67,7 @@ const ACTION_CENTER_TYPES: readonly NotificationType[] = [
   'payment_failed',
   'order_ready_for_pickup',
   'order_pickup_delayed',
+  'production_overdue',
   'upload_review_required',
   'upload_failed',
   'low_stock',
@@ -76,6 +82,8 @@ export class NotificationsService {
     private readonly orderModel: Model<OrderDocument>,
     @InjectModel(StockItem.name)
     private readonly stockItemModel: Model<StockItemDocument>,
+    @InjectModel(ProductionJob.name)
+    private readonly productionJobModel?: Model<ProductionJobDocument>,
   ) {}
 
   /**
@@ -273,12 +281,61 @@ export class NotificationsService {
     );
   }
 
+  async syncOverdueProductionNotifications(): Promise<void> {
+    if (!this.productionJobModel) return;
+    const overdueJobs = await this.productionJobModel
+      .find({
+        ...incompleteProductionJobMatch(),
+        dueAt: { $lt: new Date() },
+      })
+      .select('jobNumber orderId orderNumber workSummary dueAt')
+      .exec();
+
+    const activeKeys: string[] = [];
+    for (const job of overdueJobs) {
+      const jobId = String(job._id);
+      const key = `production_overdue:${jobId}`;
+      activeKeys.push(key);
+      await this.createNotification({
+        type: 'production_overdue',
+        category: 'action_required',
+        priority: 'high',
+        title: `งานผลิตเกินกำหนด ${job.jobNumber}`,
+        message: job.workSummary,
+        orderId: String(job.orderId),
+        orderCode: job.orderNumber,
+        dueDate: job.dueAt,
+        entityType: 'production_job',
+        entityId: jobId,
+        notificationKey: key,
+        action: {
+          label: 'เปิด Production Board',
+          action: 'open_production_job',
+        },
+      });
+    }
+
+    await this.notificationModel.updateMany(
+      {
+        type: 'production_overdue',
+        status: 'active',
+        ...(activeKeys.length ? { notificationKey: { $nin: activeKeys } } : {}),
+      },
+      {
+        $set: { status: 'resolved', resolvedAt: new Date() },
+      },
+    );
+  }
+
   /**
    * Return the operational action queue and summary from one consistent snapshot.
    * Legacy order-created noise is intentionally excluded from this view.
    */
   async getActionCenter(): Promise<ActionCenterDto> {
-    await this.syncLowStockNotifications();
+    await Promise.all([
+      this.syncLowStockNotifications(),
+      this.syncOverdueProductionNotifications(),
+    ]);
 
     const notifications = await this.notificationModel
       .find({ status: 'active', type: { $in: ACTION_CENTER_TYPES } })

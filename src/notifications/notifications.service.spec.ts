@@ -3,6 +3,7 @@ import type { Model } from 'mongoose';
 import type { OrderDocument } from '../orders/orders.schema';
 import type { StockItemDocument } from '../inventory/schemas/stock-item.schema';
 import type { NotificationDocument } from './notifications.schema';
+import type { ProductionJobDocument } from '../production/schemas/production-job.schema';
 import { NotificationsService } from './notifications.service';
 
 function notification(overrides: Partial<Record<string, unknown>> = {}) {
@@ -203,6 +204,104 @@ describe('NotificationsService action center', () => {
     });
     expect(resolveUpdate.$set.status).toBe('resolved');
     expect(resolveUpdate.$set.resolvedAt).toBeInstanceOf(Date);
+  });
+
+  it('reconciles overdue production jobs with a stable key and reopens after the condition returns', async () => {
+    const overdueJob = {
+      _id: '64b000000000000000000099',
+      jobNumber: 'PJ-OVERDUE-1',
+      orderId: '64b000000000000000000088',
+      orderNumber: 'OR-0088',
+      workSummary: 'งานพิมพ์ด่วน',
+      dueAt: new Date('2026-08-29T10:00:00.000Z'),
+    };
+    const productionExec = jest
+      .fn()
+      .mockResolvedValueOnce([overdueJob])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([overdueJob]);
+    const productionSelect = jest
+      .fn()
+      .mockReturnValue({ exec: productionExec });
+    const productionFilters: Array<Record<string, unknown>> = [];
+    const productionFind = jest.fn((filter: Record<string, unknown>) => {
+      productionFilters.push(filter);
+      return { select: productionSelect };
+    });
+    const upserts: Array<{
+      filter: Record<string, unknown>;
+      values: { $set: Record<string, unknown> };
+    }> = [];
+    const findOneAndUpdate = jest.fn(
+      (
+        filter: Record<string, unknown>,
+        values: { $set: Record<string, unknown> },
+      ) => {
+        upserts.push({ filter, values });
+        return Promise.resolve(
+          notification({
+            _id: 'production-overdue',
+            type: 'production_overdue',
+            entityType: 'production_job',
+            entityId: overdueJob._id,
+            ...values.$set,
+          }) as NotificationDocument,
+        );
+      },
+    );
+    const resolveFilters: Array<Record<string, unknown>> = [];
+    const updateMany = jest.fn((filter: Record<string, unknown>) => {
+      resolveFilters.push(filter);
+      return Promise.resolve({ modifiedCount: 1 });
+    });
+    const service = new NotificationsService(
+      {
+        findOneAndUpdate,
+        updateMany,
+      } as unknown as Model<NotificationDocument>,
+      {} as Model<OrderDocument>,
+      {} as Model<StockItemDocument>,
+      { find: productionFind } as unknown as Model<ProductionJobDocument>,
+    );
+
+    await service.syncOverdueProductionNotifications();
+    await service.syncOverdueProductionNotifications();
+    await service.syncOverdueProductionNotifications();
+
+    expect(productionFind).toHaveBeenCalledTimes(3);
+    const productionFilter = productionFilters[0] as {
+      stage: { $nin: string[] };
+      dueAt: { $lt: Date };
+    };
+    expect(productionFilter.stage.$nin).toEqual(['ready', 'delivered']);
+    expect(productionFilter.dueAt.$lt).toBeInstanceOf(Date);
+    expect(findOneAndUpdate).toHaveBeenCalledTimes(2);
+    expect(upserts[0]?.filter).toEqual({
+      notificationKey: 'production_overdue:64b000000000000000000099',
+    });
+    expect(upserts[1]?.filter).toEqual({
+      notificationKey: 'production_overdue:64b000000000000000000099',
+    });
+    const firstValues = upserts[0]?.values;
+    expect(firstValues?.$set).toEqual(
+      expect.objectContaining({
+        type: 'production_overdue',
+        category: 'action_required',
+        entityType: 'production_job',
+        entityId: '64b000000000000000000099',
+        dueDate: overdueJob.dueAt,
+        action: {
+          label: 'เปิด Production Board',
+          action: 'open_production_job',
+        },
+        status: 'active',
+      }),
+    );
+    expect(updateMany).toHaveBeenCalledTimes(3);
+    expect(resolveFilters[1]).toEqual({
+      type: 'production_overdue',
+      status: 'active',
+    });
   });
 
   it.each([
