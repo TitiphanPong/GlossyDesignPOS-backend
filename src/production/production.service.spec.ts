@@ -107,47 +107,57 @@ describe('ProductionService', () => {
     expect(result).not.toHaveProperty('phoneNumber');
   });
 
-  it('supports job-type filtering and customer-name search without exposing customer PII', async () => {
-    const job = makeJob();
-    const listQuery = {
-      sort: jest.fn().mockReturnThis(),
-      skip: jest.fn().mockReturnThis(),
-      limit: jest.fn().mockReturnThis(),
-      exec: jest.fn().mockResolvedValue([job]),
-    };
-    let capturedFilter: unknown;
-    const find = jest.fn((filter: unknown) => {
-      capturedFilter = filter;
-      return listQuery;
+  it('paginates beyond 100 jobs and searches customer names without a 100-Order id cap', async () => {
+    const jobs = Array.from({ length: 25 }, (_, index) => ({
+      ...makeJob(index % 2 === 0 ? 'queued' : 'producing'),
+      _id: new Types.ObjectId(),
+      jobNumber: `PJ-${index + 101}`,
+    })) as ProductionJobDocument[];
+    let capturedPipeline: unknown[] = [];
+    const aggregate = jest.fn((pipeline: unknown[]) => {
+      capturedPipeline = pipeline;
+      return Promise.resolve([
+        {
+          items: jobs,
+          total: [{ count: 125 }],
+          stageCounts: [
+            { _id: 'queued', count: 62 },
+            { _id: 'producing', count: 63 },
+          ],
+        },
+      ]);
     });
     const productionJobModel = {
-      countDocuments: jest
-        .fn()
-        .mockReturnValue({ exec: jest.fn().mockResolvedValue(1) }),
-      find,
+      aggregate,
     } as unknown as Model<ProductionJobDocument>;
-    const orderLookup = {
-      select: jest.fn().mockReturnThis(),
-      limit: jest.fn().mockReturnThis(),
-      lean: jest.fn().mockReturnThis(),
-      exec: jest.fn().mockResolvedValue([{ _id: new Types.ObjectId(orderId) }]),
-    };
-    const orderFind = jest.fn().mockReturnValue(orderLookup);
     const service = new ProductionService(
       productionJobModel,
-      { find: orderFind } as unknown as Model<OrderDocument>,
+      { collection: { name: 'orders' } } as unknown as Model<OrderDocument>,
       {} as Model<UploadDocument>,
       {} as Model<UserDocument>,
     );
 
-    const result = await service.listJobs({ q: 'สมชาย', jobType: 'นามบัตร' });
+    const result = await service.listJobs({
+      q: 'สมชาย',
+      jobType: 'นามบัตร',
+      page: 5,
+      limit: 25,
+    });
 
-    expect(orderFind).toHaveBeenCalledTimes(1);
-    expect(find).toHaveBeenCalledTimes(1);
-    const serializedFilter = JSON.stringify(capturedFilter);
-    expect(serializedFilter).toContain('"jobType"');
-    expect(serializedFilter).toContain('"orderId"');
-    expect(result.items[0]?.jobType).toBe('นามบัตร');
+    expect(aggregate).toHaveBeenCalledTimes(1);
+    expect(result.total).toBe(125);
+    expect(result.totalPages).toBe(5);
+    expect(result.items).toHaveLength(25);
+    expect(result.stageCounts.queued).toBe(62);
+    expect(result.stageCounts.producing).toBe(63);
     expect(result.items[0]).not.toHaveProperty('customerName');
+
+    const serializedPipeline = JSON.stringify(capturedPipeline);
+    expect(serializedPipeline).toContain('"$lookup"');
+    expect(serializedPipeline).toContain('"from":"orders"');
+    expect(serializedPipeline).toContain('"_searchOrder.customerName"');
+    expect(serializedPipeline).toContain('"$skip":100');
+    expect(serializedPipeline).not.toContain('"$limit":100');
+    expect(serializedPipeline).not.toContain('"$in"');
   });
 });

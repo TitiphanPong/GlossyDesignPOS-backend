@@ -7,7 +7,7 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { randomBytes } from 'node:crypto';
 import { MongoServerError } from 'mongodb';
-import { FilterQuery, isValidObjectId, Model, Types } from 'mongoose';
+import { isValidObjectId, Model, PipelineStage, Types } from 'mongoose';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { User, UserDocument } from '../auth/schemas/user.schema';
 import { PublicTrackingMilestone } from '../orders/dto/tracking-response.dto';
@@ -19,6 +19,7 @@ import {
   UpdateProductionJobDto,
 } from './dto/production-job.dto';
 import {
+  PRODUCTION_JOB_STAGES,
   ProductionJob,
   ProductionJobDocument,
   ProductionJobStage,
@@ -114,59 +115,89 @@ export class ProductionService {
   async listJobs(query: ListProductionJobsQueryDto = {}) {
     const page = query.page ?? 1;
     const limit = query.limit ?? 25;
-    const filter: FilterQuery<ProductionJob> = {};
-    if (query.stage) filter.stage = query.stage;
-    if (query.priority) filter.priority = query.priority;
+    const baseMatch: Record<string, unknown> = {};
+    if (query.priority) baseMatch.priority = query.priority;
     if (query.jobType?.trim()) {
       const escapedJobType = query.jobType
         .trim()
         .replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      filter.jobType = { $regex: `^${escapedJobType}$`, $options: 'i' };
+      baseMatch.jobType = { $regex: `^${escapedJobType}$`, $options: 'i' };
     }
-    if (query.assigneeUserId) filter.assigneeUserId = query.assigneeUserId;
+    if (query.assigneeUserId) baseMatch.assigneeUserId = query.assigneeUserId;
 
     if (query.due && query.due !== 'all') {
       const now = new Date();
       if (query.due === 'overdue') {
-        filter.dueAt = { $lt: now };
-        filter.stage = { $nin: ['ready', 'delivered'] };
+        baseMatch.dueAt = { $lt: now };
+        baseMatch.stage = { $nin: ['ready', 'delivered'] };
       } else {
         const { start, end } = this.bangkokDayBounds(now);
-        filter.dueAt = { $gte: start, $lt: end };
+        baseMatch.dueAt = { $gte: start, $lt: end };
       }
     }
+
+    const pipeline: PipelineStage[] = [];
+    if (Object.keys(baseMatch).length) pipeline.push({ $match: baseMatch });
 
     const search = query.q?.trim();
     if (search) {
       const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const regex = { $regex: escaped, $options: 'i' };
-      const matchingOrders = await this.orderModel
-        .find({ customerName: regex })
-        .select({ _id: 1 })
-        .limit(100)
-        .lean()
-        .exec();
-      filter.$or = [
-        { jobNumber: regex },
-        { orderNumber: regex },
-        { workSummary: regex },
-        { jobType: regex },
-        { assigneeUsername: regex },
-        ...(matchingOrders.length
-          ? [{ orderId: { $in: matchingOrders.map((order) => order._id) } }]
-          : []),
-      ];
+      pipeline.push(
+        {
+          $lookup: {
+            from: this.orderModel.collection.name,
+            localField: 'orderId',
+            foreignField: '_id',
+            as: '_searchOrder',
+            pipeline: [{ $project: { customerName: 1 } }],
+          },
+        },
+        {
+          $match: {
+            $or: [
+              { jobNumber: regex },
+              { orderNumber: regex },
+              { workSummary: regex },
+              { jobType: regex },
+              { assigneeUsername: regex },
+              { '_searchOrder.customerName': regex },
+            ],
+          },
+        },
+        { $project: { _searchOrder: 0 } },
+      );
     }
 
-    const [total, jobs] = await Promise.all([
-      this.productionJobModel.countDocuments(filter).exec(),
-      this.productionJobModel
-        .find(filter)
-        .sort({ priority: -1, dueAt: 1, createdAt: 1 })
-        .skip((page - 1) * limit)
-        .limit(limit)
-        .exec(),
-    ]);
+    const selectedStagePipeline: PipelineStage.Match[] = query.stage
+      ? [{ $match: { stage: query.stage } }]
+      : [];
+    pipeline.push({
+      $facet: {
+        items: [
+          ...selectedStagePipeline,
+          { $sort: { priority: -1, dueAt: 1, createdAt: 1 } },
+          { $skip: (page - 1) * limit },
+          { $limit: limit },
+        ],
+        total: [...selectedStagePipeline, { $count: 'count' }],
+        stageCounts: [{ $group: { _id: '$stage', count: { $sum: 1 } } }],
+      },
+    });
+
+    const [result] = await this.productionJobModel.aggregate<{
+      items: ProductionJobDocument[];
+      total: Array<{ count: number }>;
+      stageCounts: Array<{ _id: ProductionJobStage; count: number }>;
+    }>(pipeline);
+    const jobs = result?.items ?? [];
+    const total = result?.total[0]?.count ?? 0;
+    const stageCounts = Object.fromEntries(
+      PRODUCTION_JOB_STAGES.map((stage) => [
+        stage,
+        result?.stageCounts.find((row) => row._id === stage)?.count ?? 0,
+      ]),
+    ) as Record<ProductionJobStage, number>;
 
     return {
       items: jobs.map((job) => this.toResponse(job)),
@@ -174,6 +205,7 @@ export class ProductionService {
       limit,
       total,
       totalPages: Math.max(1, Math.ceil(total / limit)),
+      stageCounts,
     };
   }
 
