@@ -455,13 +455,120 @@ export class OrdersService {
     return response;
   }
 
-  async deleteOrder(id: string): Promise<OrderResponseDto> {
+  async cancelOrder(
+    id: string,
+    reason: string,
+    actor: Pick<AuthenticatedUser, 'id'>,
+  ): Promise<OrderResponseDto> {
     this.assertMongoObjectId(id, 'order id');
-    const deleted = await this.orderModel.findByIdAndDelete(id).exec();
-    if (!deleted) {
+    const normalizedReason = reason.trim();
+    if (!normalizedReason) {
+      throw new BadRequestException('Cancellation reason is required.');
+    }
+
+    const existing = await this.orderModel.findById(id).exec();
+    if (!existing) {
       throw new NotFoundException(`Order not found for id "${id}".`);
     }
-    return this.toOrderResponse(deleted);
+
+    if (this.resolveWorkflowStatus(existing.toObject()) === 'cancelled') {
+      return this.toOrderResponse(existing);
+    }
+
+    const paidMinor = this.sumPaymentFactsMinor(existing);
+    const storedPaidMinor = toMinorUnits(
+      existing.paidAmount ?? 0,
+      'paid amount',
+    );
+    const storedDepositMinor = toMinorUnits(
+      existing.depositTotal ?? 0,
+      'deposit total',
+    );
+    if (paidMinor !== storedPaidMinor || paidMinor !== storedDepositMinor) {
+      throw new ConflictException(
+        'Stored payment totals do not reconcile with payment facts. Reconciliation is required before cancellation.',
+      );
+    }
+
+    const cancelledAt = new Date();
+    const financialAdjustments = (existing.payments ?? []).map((payment) => ({
+      type: 'refund' as const,
+      amount: -fromMinorUnits(toMinorUnits(payment.amount, 'payment amount')),
+      method: payment.method,
+      reason: normalizedReason,
+      occurredAt: cancelledAt,
+      changedBy: actor.id,
+      ...(payment.idempotencyKey
+        ? { sourcePaymentIdempotencyKey: payment.idempotencyKey }
+        : {}),
+    }));
+    const currentWorkflowStatus = this.resolveWorkflowStatus(
+      existing.toObject(),
+    );
+    const workflowPredicate = existing.workflowStatus
+      ? { workflowStatus: currentWorkflowStatus }
+      : { workflowStatus: { $exists: false } };
+    const correctiveDocumentRequired =
+      existing.taxInvoice === 'yes' || Boolean(existing.invoiceNumber);
+    const statusHistoryEntry = {
+      status: 'cancelled' as const,
+      note: normalizedReason,
+      changedAt: cancelledAt,
+      changedBy: actor.id,
+    };
+
+    const updated = await this.orderModel
+      .findOneAndUpdate(
+        {
+          _id: id,
+          ...workflowPredicate,
+          status: existing.status,
+          paidAmount: existing.paidAmount,
+        },
+        {
+          $set: {
+            status: 'cancelled',
+            workflowStatus: 'cancelled',
+            remainingTotal: 0,
+            cancellation: {
+              reason: normalizedReason,
+              cancelledAt,
+              cancelledBy: actor.id,
+              refundedAmount: fromMinorUnits(paidMinor),
+              correctiveDocumentRequired,
+              correctiveDocumentStatus: correctiveDocumentRequired
+                ? 'required'
+                : 'not_required',
+            },
+          },
+          $push: {
+            statusHistory: statusHistoryEntry,
+            ...(financialAdjustments.length
+              ? { financialAdjustments: { $each: financialAdjustments } }
+              : {}),
+          },
+        },
+        { new: true, runValidators: true },
+      )
+      .exec();
+
+    if (!updated) {
+      const concurrentlyUpdated = await this.orderModel.findById(id).exec();
+      if (
+        concurrentlyUpdated &&
+        this.resolveWorkflowStatus(concurrentlyUpdated.toObject()) ===
+          'cancelled'
+      ) {
+        return this.toOrderResponse(concurrentlyUpdated);
+      }
+      throw new ConflictException(
+        'Order or payment state changed concurrently. Please retry the cancellation.',
+      );
+    }
+
+    const response = this.toOrderResponse(updated);
+    this.emitForStatus(response, 'cancelled');
+    return response;
   }
 
   async getSummary() {
@@ -959,6 +1066,11 @@ export class OrdersService {
   }
 
   private assertWorkflowStatusWritable(status: OrderStatus): void {
+    if (status === 'cancelled') {
+      throw new BadRequestException(
+        'Order cancellation requires the dedicated cancellation command and a reason.',
+      );
+    }
     if (
       status === 'awaiting_payment' ||
       status === 'partial' ||
@@ -1541,6 +1653,8 @@ export class OrdersService {
         note: payment.note,
         paidAt: payment.paidAt,
       })),
+      financialAdjustments: plain.financialAdjustments ?? [],
+      cancellation: plain.cancellation,
       statusHistory: plain.statusHistory ?? [],
       cart: plain.cart,
       createdAt: plain.createdAt,

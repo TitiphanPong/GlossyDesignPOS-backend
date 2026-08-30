@@ -2,7 +2,6 @@
 import {
   Body,
   Controller,
-  Delete,
   Get,
   Headers,
   Param,
@@ -27,8 +26,7 @@ import {
 } from './dto/order.dto';
 import { AuditService } from '../auth/audit.service';
 import { AuthenticatedUser } from '../auth/auth.types';
-import { AuthService } from '../auth/auth.service';
-import { DeleteOrderDto } from './dto/delete-order.dto';
+import { CancelOrderDto } from './dto/cancel-order.dto';
 import { ListOrdersQueryDto } from './dto/list-orders-query.dto';
 import { ExportOrdersQueryDto } from './dto/list-orders-query.dto';
 
@@ -40,7 +38,6 @@ export class OrdersController {
     private readonly ordersService: OrdersService,
     private readonly ordersSse: OrdersSseService,
     private readonly auditService: AuditService,
-    private readonly authService: AuthService,
   ) {}
 
   @Post()
@@ -191,23 +188,32 @@ export class OrdersController {
     return updated;
   }
 
-  @Delete(':id')
-  async deleteOrder(
+  @Post(':id/cancel')
+  async cancelOrder(
     @Param('id') id: string,
-    @Body() body: DeleteOrderDto,
+    @Body() body: CancelOrderDto,
     @Request() request: AuthRequest,
   ): Promise<OrderResponseDto> {
     const actor = request.user;
     if (!actor) throw new Error('Authenticated user is required');
-    await this.authService.confirmPassword(actor.id, body.password);
-    const deleted = await this.ordersService.deleteOrder(id);
+    const cancelled = await this.ordersService.cancelOrder(
+      id,
+      body.reason,
+      actor,
+    );
     await this.auditService.record(
       actor,
-      'order.delete',
+      'order.cancel',
       { type: 'order', id },
-      { orderNumber: deleted.orderNumber ?? deleted.orderId },
+      {
+        orderNumber: cancelled.orderNumber ?? cancelled.orderId,
+        reason: body.reason.trim(),
+        refundedAmount: cancelled.cancellation?.refundedAmount ?? 0,
+        correctiveDocumentRequired:
+          cancelled.cancellation?.correctiveDocumentRequired ?? false,
+      },
     );
-    return deleted;
+    return cancelled;
   }
 
   @Post(':id/payments')

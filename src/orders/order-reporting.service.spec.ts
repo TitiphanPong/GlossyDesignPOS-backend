@@ -88,7 +88,7 @@ describe('OrderReportingService', () => {
     expect(serialized).toContain('pending');
   });
 
-  it('excludes cancelled orders from Dashboard payment collections', async () => {
+  it('includes signed cancellation adjustments in Dashboard collections', async () => {
     const pipelines: PipelineStage[][] = [];
     const aggregate = jest.fn((pipeline: PipelineStage[]) => {
       pipelines.push(pipeline);
@@ -101,9 +101,11 @@ describe('OrderReportingService', () => {
     await dashboardService.getDashboardMetrics({ period: 'today' });
 
     const receivedPipeline = pipelines[2];
-    expect(receivedPipeline[0]).toEqual({
-      $match: { status: { $ne: 'cancelled' } },
-    });
+    expect(receivedPipeline[0]).toEqual({ $match: {} });
+    const serialized = JSON.stringify(receivedPipeline);
+    expect(serialized).toContain('financialAdjustments');
+    expect(serialized).toContain('occurredAt');
+    expect(serialized).toContain('adjustmentReceived');
   });
 
   it('creates a real XLSX with Thai text, leading-zero phone and formula-safe strings', async () => {
