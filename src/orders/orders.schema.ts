@@ -219,6 +219,58 @@ export class Order {
   @Prop({
     type: [
       {
+        type: { type: String, enum: ['refund'], required: true },
+        amount: { type: Number, required: true },
+        method: { type: String, enum: PAYMENT_METHODS, required: true },
+        reason: { type: String, required: true, maxlength: 1000 },
+        occurredAt: { type: Date, required: true },
+        changedBy: { type: String, required: true },
+        sourcePaymentIdempotencyKey: { type: String, maxlength: 128 },
+      },
+    ],
+    default: [],
+  })
+  financialAdjustments!: {
+    type: 'refund';
+    amount: number;
+    method: PaymentMethod;
+    reason: string;
+    occurredAt: Date;
+    changedBy: string;
+    sourcePaymentIdempotencyKey?: string;
+  }[];
+
+  @Prop({
+    type: {
+      reason: { type: String, required: true, maxlength: 1000 },
+      cancelledAt: { type: Date, required: true },
+      cancelledBy: { type: String, required: true },
+      refundedAmount: { type: Number, required: true, default: 0 },
+      correctiveDocumentRequired: {
+        type: Boolean,
+        required: true,
+        default: false,
+      },
+      correctiveDocumentStatus: {
+        type: String,
+        enum: ['not_required', 'required'],
+        required: true,
+      },
+    },
+    _id: false,
+  })
+  cancellation?: {
+    reason: string;
+    cancelledAt: Date;
+    cancelledBy: string;
+    refundedAmount: number;
+    correctiveDocumentRequired: boolean;
+    correctiveDocumentStatus: 'not_required' | 'required';
+  };
+
+  @Prop({
+    type: [
+      {
         status: { type: String, enum: ORDER_STATUSES, required: true },
         note: String,
         changedAt: { type: Date, default: Date.now },

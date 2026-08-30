@@ -445,6 +445,27 @@ describe('OrdersController (e2e)', () => {
     );
   });
 
+  it('DELETE /orders/:id is not available for production hard delete', async () => {
+    await request(server)
+      .delete('/orders/61a1c287e53a7024d4ab81425')
+      .send({ password: 'irrelevant' })
+      .expect(404);
+  });
+
+  it('POST /orders/:id/cancel requires a cancellation reason', async () => {
+    await request(server)
+      .post('/orders/61a1c287e53a7024d4ab81425/cancel')
+      .send({ reason: '' })
+      .expect(400)
+      .expect(({ body }: { body: { message: string | string[] } }) => {
+        expect(body.message).toEqual(
+          expect.arrayContaining([
+            'reason must be longer than or equal to 1 characters',
+          ]),
+        );
+      });
+  });
+
   it('GET /orders returns a bounded paginated list', async () => {
     findAll.mockResolvedValue({
       data: [

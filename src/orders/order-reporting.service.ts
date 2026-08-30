@@ -452,9 +452,7 @@ export class OrderReportingService {
     ] = await Promise.all([
       this.salesAggregate(current),
       this.salesAggregate(previous),
-      this.orderModel.aggregate<ReceivedRow>(
-        this.receivedPipeline(current, { status: { $ne: 'cancelled' } }),
-      ),
+      this.orderModel.aggregate<ReceivedRow>(this.receivedPipeline(current)),
       this.orderModel.aggregate<TrendRow>([
         {
           $match: {
@@ -609,6 +607,7 @@ export class OrderReportingService {
           total: amountExpression(),
           initialPaid: initialPaidExpression(),
           payments: { $ifNull: ['$payments', []] },
+          financialAdjustments: { $ifNull: ['$financialAdjustments', []] },
         },
       },
       {
@@ -622,6 +621,13 @@ export class OrderReportingService {
               input: '$payments',
               as: 'p',
               cond: inRange('$$p.paidAt'),
+            },
+          },
+          selectedAdjustments: {
+            $filter: {
+              input: '$financialAdjustments',
+              as: 'adjustment',
+              cond: inRange('$$adjustment.occurredAt'),
             },
           },
         },
@@ -662,17 +668,61 @@ export class OrderReportingService {
               },
             },
           },
+          adjustmentReceived: {
+            $sum: {
+              $map: {
+                input: '$selectedAdjustments',
+                as: 'adjustment',
+                in: '$$adjustment.amount',
+              },
+            },
+          },
+          adjustmentCash: {
+            $sum: {
+              $map: {
+                input: '$selectedAdjustments',
+                as: 'adjustment',
+                in: {
+                  $cond: [
+                    { $eq: ['$$adjustment.method', 'cash'] },
+                    '$$adjustment.amount',
+                    0,
+                  ],
+                },
+              },
+            },
+          },
+          adjustmentTransfer: {
+            $sum: {
+              $map: {
+                input: '$selectedAdjustments',
+                as: 'adjustment',
+                in: {
+                  $cond: [
+                    { $eq: ['$$adjustment.method', 'promptpay'] },
+                    '$$adjustment.amount',
+                    0,
+                  ],
+                },
+              },
+            },
+          },
         },
       },
       {
         $group: {
           _id: null,
-          received: { $sum: { $add: ['$initial', '$paymentReceived'] } },
+          received: {
+            $sum: {
+              $add: ['$initial', '$paymentReceived', '$adjustmentReceived'],
+            },
+          },
           cash: {
             $sum: {
               $add: [
                 { $cond: [{ $eq: ['$payment', 'cash'] }, '$initial', 0] },
                 '$paymentCash',
+                '$adjustmentCash',
               ],
             },
           },
@@ -681,6 +731,7 @@ export class OrderReportingService {
               $add: [
                 { $cond: [{ $eq: ['$payment', 'promptpay'] }, '$initial', 0] },
                 '$paymentTransfer',
+                '$adjustmentTransfer',
               ],
             },
           },

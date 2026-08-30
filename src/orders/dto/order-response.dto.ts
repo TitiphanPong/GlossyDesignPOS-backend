@@ -13,6 +13,16 @@ type OrderPaymentDto = {
   paidAt: Date;
 };
 
+type OrderFinancialAdjustmentDto = {
+  type: 'refund';
+  amount: number;
+  method: PaymentMethod;
+  reason: string;
+  occurredAt: Date;
+  changedBy: string;
+  sourcePaymentIdempotencyKey?: string;
+};
+
 type OrderCartItemDto = {
   key?: string;
   productId?: string;
@@ -96,6 +106,15 @@ export class OrderResponseDto {
   receivedAmount?: number;
   changeAmount?: number;
   payments!: OrderPaymentDto[];
+  financialAdjustments!: OrderFinancialAdjustmentDto[];
+  cancellation?: {
+    reason: string;
+    cancelledAt: Date;
+    cancelledBy: string;
+    refundedAmount: number;
+    correctiveDocumentRequired: boolean;
+    correctiveDocumentStatus: 'not_required' | 'required';
+  };
   statusHistory!: {
     status: OrderStatus;
     note?: string;

@@ -450,33 +450,190 @@ describe('OrdersService', () => {
     expect(findOneAndUpdate).not.toHaveBeenCalled();
   });
 
-  it('cancellation keeps its existing separate semantics while recording actor', async () => {
-    const current = makeWorkflowOrder('producing', 'partial');
-    const updated = makeWorkflowOrder('cancelled', 'cancelled');
-    findById.mockReturnValue({
-      exec: jest.fn().mockResolvedValue(current),
-    });
+  it('rejects cancellation through the generic workflow status route', async () => {
+    await expect(
+      service.updateStatus(validOrderId, 'cancelled', 'reason', {
+        id: 'user-123',
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(findById).not.toHaveBeenCalled();
+  });
+
+  it('cancels without deleting and appends refund facts for collected payments', async () => {
+    const paymentDate = new Date('2026-08-30T01:00:00.000Z');
+    const currentPlain = {
+      orderId: validOrderId,
+      orderNumber: 'GL-20260830-0001',
+      customerName: 'Cancel Customer',
+      phoneNumber: '0812345678',
+      note: '',
+      total: 100,
+      subtotal: 100,
+      discount: 0,
+      depositTotal: 50,
+      paidAmount: 50,
+      remainingTotal: 50,
+      payment: 'cash' as const,
+      paymentMethod: 'cash' as const,
+      status: 'partial' as const,
+      workflowStatus: 'producing' as const,
+      taxInvoice: 'yes' as const,
+      invoiceNumber: 'INV-001',
+      vatAmount: 0,
+      grandTotal: 100,
+      payments: [
+        {
+          amount: 50,
+          method: 'cash' as const,
+          idempotencyKey: 'pay-1',
+          paidAt: paymentDate,
+        },
+      ],
+      financialAdjustments: [],
+      statusHistory: [{ status: 'producing' as const, changedAt: paymentDate }],
+      cart: [],
+      createdAt: paymentDate,
+      updatedAt: paymentDate,
+    };
+    const current = {
+      _id: { toString: () => validOrderId },
+      ...currentPlain,
+      toObject: () => currentPlain,
+    } as unknown as OrderDocument;
+    const updatedPlain = {
+      ...currentPlain,
+      status: 'cancelled' as const,
+      workflowStatus: 'cancelled' as const,
+      remainingTotal: 0,
+      cancellation: {
+        reason: 'ลูกค้ายกเลิก',
+        cancelledAt: new Date(),
+        cancelledBy: 'user-123',
+        refundedAmount: 50,
+        correctiveDocumentRequired: true,
+        correctiveDocumentStatus: 'required' as const,
+      },
+    };
+    const updated = {
+      _id: { toString: () => validOrderId },
+      ...updatedPlain,
+      toObject: () => updatedPlain,
+    } as unknown as OrderDocument;
+    findById.mockReturnValue({ exec: jest.fn().mockResolvedValue(current) });
     findOneAndUpdate.mockReturnValue({
       exec: jest.fn().mockResolvedValue(updated),
     });
 
-    await service.updateStatus(validOrderId, 'cancelled', undefined, {
+    const result = await service.cancelOrder(validOrderId, ' ลูกค้ายกเลิก ', {
       id: 'user-123',
     });
 
-    expect(findOneAndUpdate).toHaveBeenCalledWith(
-      { _id: validOrderId, workflowStatus: 'producing' },
+    expect(result.status).toBe('cancelled');
+    expect(result.cancellation).toEqual(
       expect.objectContaining({
-        $set: { workflowStatus: 'cancelled', status: 'cancelled' },
-        $push: {
-          statusHistory: expect.objectContaining({
-            status: 'cancelled',
-            changedBy: 'user-123',
+        refundedAmount: 50,
+        correctiveDocumentRequired: true,
+      }),
+    );
+    expect(findOneAndUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        _id: validOrderId,
+        workflowStatus: 'producing',
+        status: 'partial',
+        paidAmount: 50,
+      }),
+      expect.objectContaining({
+        $set: expect.objectContaining({
+          status: 'cancelled',
+          workflowStatus: 'cancelled',
+          remainingTotal: 0,
+        }) as unknown,
+        $push: expect.objectContaining({
+          financialAdjustments: expect.objectContaining({
+            $each: [
+              expect.objectContaining({
+                type: 'refund',
+                amount: -50,
+                method: 'cash',
+                reason: 'ลูกค้ายกเลิก',
+                changedBy: 'user-123',
+                sourcePaymentIdempotencyKey: 'pay-1',
+              }),
+            ],
           }) as unknown,
-        },
+        }) as unknown,
       }),
       { new: true, runValidators: true },
     );
+  });
+
+  it('returns the concurrently cancelled order instead of duplicating refund facts', async () => {
+    const basePlain = {
+      orderId: validOrderId,
+      orderNumber: 'GL-20260830-0002',
+      customerName: 'Concurrent Cancel',
+      phoneNumber: '0812345678',
+      note: '',
+      total: 100,
+      subtotal: 100,
+      discount: 0,
+      depositTotal: 0,
+      paidAmount: 0,
+      remainingTotal: 100,
+      payment: 'cash' as const,
+      paymentMethod: 'cash' as const,
+      status: 'pending' as const,
+      workflowStatus: 'pending' as const,
+      taxInvoice: 'no' as const,
+      vatAmount: 0,
+      grandTotal: 100,
+      payments: [],
+      financialAdjustments: [],
+      statusHistory: [],
+      cart: [],
+      createdAt: new Date('2026-08-30T01:00:00.000Z'),
+      updatedAt: new Date('2026-08-30T01:00:00.000Z'),
+    };
+    const existing = {
+      _id: { toString: () => validOrderId },
+      ...basePlain,
+      toObject: () => basePlain,
+    } as unknown as OrderDocument;
+    const cancelledPlain = {
+      ...basePlain,
+      status: 'cancelled' as const,
+      workflowStatus: 'cancelled' as const,
+      remainingTotal: 0,
+      cancellation: {
+        reason: 'ลูกค้ายกเลิก',
+        cancelledAt: new Date(),
+        cancelledBy: 'other-user',
+        refundedAmount: 0,
+        correctiveDocumentRequired: false,
+        correctiveDocumentStatus: 'not_required' as const,
+      },
+    };
+    const concurrentlyCancelled = {
+      _id: { toString: () => validOrderId },
+      ...cancelledPlain,
+      toObject: () => cancelledPlain,
+    } as unknown as OrderDocument;
+    findById
+      .mockReturnValueOnce({ exec: jest.fn().mockResolvedValue(existing) })
+      .mockReturnValueOnce({
+        exec: jest.fn().mockResolvedValue(concurrentlyCancelled),
+      });
+    findOneAndUpdate.mockReturnValue({
+      exec: jest.fn().mockResolvedValue(null),
+    });
+
+    const result = await service.cancelOrder(validOrderId, 'ลูกค้ายกเลิก', {
+      id: 'user-123',
+    });
+
+    expect(result.status).toBe('cancelled');
+    expect(result.cancellation?.cancelledBy).toBe('other-user');
+    expect(findOneAndUpdate).toHaveBeenCalledTimes(1);
   });
 
   it.each(['awaiting_payment', 'partial', 'paid'] as const)(
