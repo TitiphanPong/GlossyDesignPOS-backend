@@ -7,6 +7,7 @@ import { UploadsService } from '../src/uploads/uploads.service';
 import { HttpExceptionFilter } from '../src/common/filters/http-exception.filter';
 import { JobType, UploadStage } from '../src/uploads/uploads.enums';
 import { AuditService } from '../src/auth/audit.service';
+import { LineLoginService } from '../src/line/line-login.service';
 
 describe('UploadsController (e2e)', () => {
   let app: INestApplication;
@@ -40,6 +41,10 @@ describe('UploadsController (e2e)', () => {
           },
         },
         { provide: AuditService, useValue: { record: jest.fn() } },
+        {
+          provide: LineLoginService,
+          useValue: { verifyIdToken: jest.fn() },
+        },
       ],
     }).compile();
 

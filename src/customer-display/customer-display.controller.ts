@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Patch,
   Post,
@@ -31,6 +32,30 @@ export class CustomerDisplayController {
   createSession(@Request() request: AuthRequest) {
     if (!request.user) throw new Error('Authenticated user is required');
     return this.customerDisplayService.createSession(request.user.id);
+  }
+
+  @Post('sessions/:sessionId/rotate')
+  rotateSession(
+    @Param('sessionId') sessionId: string,
+    @Request() request: AuthRequest,
+  ) {
+    if (!request.user) throw new Error('Authenticated user is required');
+    return this.customerDisplayService.rotateSession(
+      sessionId,
+      request.user.id,
+    );
+  }
+
+  @Delete('sessions/:sessionId')
+  revokeSession(
+    @Param('sessionId') sessionId: string,
+    @Request() request: AuthRequest,
+  ) {
+    if (!request.user) throw new Error('Authenticated user is required');
+    return this.customerDisplayService.revokeSession(
+      sessionId,
+      request.user.id,
+    );
   }
 
   @Patch('sessions/:sessionId/state')
