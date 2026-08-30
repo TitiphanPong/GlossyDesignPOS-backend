@@ -1,12 +1,12 @@
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import helmet from 'helmet';
-import { json, urlencoded } from 'express';
+import { json, urlencoded, type Request } from 'express';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { bodyParser: false });
 
   const frontendOrigin = process.env.FRONTEND_ORIGIN;
   app.enableCors({
@@ -18,7 +18,15 @@ async function bootstrap() {
   });
 
   app.use(helmet());
-  app.use(json({ limit: '1mb' }));
+  app.use(
+    json({
+      limit: '1mb',
+      verify: (request, _response, buffer) => {
+        (request as Request & { rawBody?: Buffer }).rawBody =
+          Buffer.from(buffer);
+      },
+    }),
+  );
   app.use(urlencoded({ extended: true, limit: '1mb' }));
   app.useGlobalPipes(
     new ValidationPipe({

@@ -72,6 +72,21 @@ class EnvironmentVariables {
   @IsOptional()
   @IsIn(['development', 'test', 'production'])
   NODE_ENV?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  LINE_CHANNEL_ID?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  LINE_CHANNEL_SECRET?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  LINE_CHANNEL_ACCESS_TOKEN?: string;
 }
 
 export function validateEnv(
@@ -104,6 +119,24 @@ export function validateEnv(
   ) {
     throw new Error(
       'Config validation error: AGENT_LOGIN_USERNAME and AGENT_LOGIN_PASSWORD must be provided together',
+    );
+  }
+
+  const lineConfigValues = [
+    validatedConfig.LINE_CHANNEL_ID,
+    validatedConfig.LINE_CHANNEL_SECRET,
+    validatedConfig.LINE_CHANNEL_ACCESS_TOKEN,
+  ];
+  const configuredLineValues = lineConfigValues.filter(
+    (value) => typeof value === 'string' && value.trim().length > 0,
+  ).length;
+
+  if (
+    configuredLineValues > 0 &&
+    configuredLineValues !== lineConfigValues.length
+  ) {
+    throw new Error(
+      'Config validation error: LINE_CHANNEL_ID, LINE_CHANNEL_SECRET and LINE_CHANNEL_ACCESS_TOKEN must be provided together',
     );
   }
 

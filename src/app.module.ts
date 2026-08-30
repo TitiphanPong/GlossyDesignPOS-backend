@@ -18,6 +18,7 @@ import { InventoryModule } from './inventory/inventory.module';
 import { ProductionModule } from './production/production.module';
 import { CustomersModule } from './customers/customers.module';
 import { CustomerDisplayModule } from './customer-display/customer-display.module';
+import { LineModule } from './line/line.module';
 
 @Module({
   imports: [
@@ -44,6 +45,7 @@ import { CustomerDisplayModule } from './customer-display/customer-display.modul
     ProductionModule,
     CustomersModule,
     CustomerDisplayModule,
+    LineModule,
   ],
   controllers: [HealthController],
   providers: [
