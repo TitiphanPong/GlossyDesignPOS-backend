@@ -174,32 +174,67 @@ export class CustomersService {
         ])
         .exec(),
     ]);
-    const orderIds = orders.map((order) => order._id);
-    const orderIdStrings = orderIds.map((value) => String(value));
     const [jobs, uploads] = await Promise.all([
-      orderIds.length
-        ? this.productionModel
-            .find({
-              orderId: { $in: orderIds },
-              stage: { $nin: ['delivered'] },
-            })
-            .select(
-              'jobNumber orderId orderNumber workSummary dueAt priority stage',
-            )
-            .sort({ dueAt: 1 })
-            .lean()
-            .exec()
-        : [],
-      orderIdStrings.length
-        ? this.uploadModel
-            .find({ linkedOrderId: { $in: orderIdStrings } })
-            .select(
-              'uploadId orderCode linkedOrderId linkedOrderNumber jobType status createdAt',
-            )
-            .sort({ createdAt: -1 })
-            .lean()
-            .exec()
-        : [],
+      this.orderModel
+        .aggregate([
+          { $match: { customerId: customerObjectId } },
+          {
+            $lookup: {
+              from: this.productionModel.collection.name,
+              localField: '_id',
+              foreignField: 'orderId',
+              pipeline: [
+                { $match: { stage: { $nin: ['delivered'] } } },
+                {
+                  $project: {
+                    jobNumber: 1,
+                    orderId: 1,
+                    orderNumber: 1,
+                    workSummary: 1,
+                    dueAt: 1,
+                    priority: 1,
+                    stage: 1,
+                  },
+                },
+              ],
+              as: 'relatedProductionJobs',
+            },
+          },
+          { $unwind: '$relatedProductionJobs' },
+          { $replaceRoot: { newRoot: '$relatedProductionJobs' } },
+          { $sort: { dueAt: 1 } },
+        ])
+        .exec(),
+      this.orderModel
+        .aggregate([
+          { $match: { customerId: customerObjectId } },
+          { $set: { _linkedOrderId: { $toString: '$_id' } } },
+          {
+            $lookup: {
+              from: this.uploadModel.collection.name,
+              localField: '_linkedOrderId',
+              foreignField: 'linkedOrderId',
+              pipeline: [
+                {
+                  $project: {
+                    uploadId: 1,
+                    orderCode: 1,
+                    linkedOrderId: 1,
+                    linkedOrderNumber: 1,
+                    jobType: 1,
+                    status: 1,
+                    createdAt: 1,
+                  },
+                },
+              ],
+              as: 'relatedUploads',
+            },
+          },
+          { $unwind: '$relatedUploads' },
+          { $replaceRoot: { newRoot: '$relatedUploads' } },
+          { $sort: { createdAt: -1 } },
+        ])
+        .exec(),
     ]);
     const summary = summaryRows[0] ?? { orderCount: 0, outstandingTotal: 0 };
     return {

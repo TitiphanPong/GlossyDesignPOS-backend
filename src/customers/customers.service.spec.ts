@@ -108,69 +108,102 @@ describe('CustomersService', () => {
     });
   });
 
-  it('derives detail aggregates from authoritative linked records without copying them into customer data', async () => {
+  it('derives related work from the full customer Order set instead of the 100-row history slice', async () => {
     const customerId = new Types.ObjectId();
-    const orderId = new Types.ObjectId();
+    const recentOrderIds = Array.from(
+      { length: 100 },
+      () => new Types.ObjectId(),
+    );
+    const olderOrderId = new Types.ObjectId();
     const customerFind = chainResult({
       _id: customerId,
       customerCode: 'CUS-1',
       displayName: 'ลูกค้าประจำ',
     });
-    const orderFind = chainResult([
-      {
+    const orderFind = chainResult(
+      recentOrderIds.map((orderId, index) => ({
         _id: orderId,
-        orderNumber: 'OR-1',
-        remainingTotal: 125.5,
-        status: 'partial',
-      },
-      {
-        _id: new Types.ObjectId(),
-        orderNumber: 'OR-2',
-        remainingTotal: 500,
-        status: 'cancelled',
-      },
-    ]);
-    const jobFind = chainResult([
-      {
-        _id: new Types.ObjectId(),
-        orderId,
-        jobNumber: 'PJ-1',
-        stage: 'producing',
-      },
-    ]);
-    const uploadFind = chainResult([
-      {
-        _id: new Types.ObjectId(),
-        linkedOrderId: String(orderId),
-        orderCode: 'GL-1',
-      },
-    ]);
+        orderNumber: `OR-${index + 1}`,
+        remainingTotal: 0,
+        status: 'paid',
+      })),
+    );
+    const summaryAggregate = {
+      exec: jest
+        .fn()
+        .mockResolvedValue([{ orderCount: 101, outstandingTotal: 125.5 }]),
+    };
+    const jobsAggregate = {
+      exec: jest.fn().mockResolvedValue([
+        {
+          _id: new Types.ObjectId(),
+          orderId: olderOrderId,
+          jobNumber: 'PJ-OLDER',
+          stage: 'producing',
+        },
+      ]),
+    };
+    const uploadsAggregate = {
+      exec: jest.fn().mockResolvedValue([
+        {
+          _id: new Types.ObjectId(),
+          linkedOrderId: String(olderOrderId),
+          orderCode: 'GL-OLDER',
+        },
+      ]),
+    };
+    const capturedPipelines: Array<Array<Record<string, unknown>>> = [];
+    const aggregateResults = [
+      summaryAggregate,
+      jobsAggregate,
+      uploadsAggregate,
+    ];
+    const aggregate = jest.fn((pipeline: Array<Record<string, unknown>>) => {
+      capturedPipelines.push(pipeline);
+      return aggregateResults[capturedPipelines.length - 1];
+    });
     const service = new CustomersService(
       {
         findById: jest.fn().mockReturnValue(customerFind),
       } as unknown as Model<CustomerDocument>,
       {
         find: jest.fn().mockReturnValue(orderFind),
-        aggregate: jest.fn().mockReturnValue({
-          exec: jest
-            .fn()
-            .mockResolvedValue([{ orderCount: 2, outstandingTotal: 125.5 }]),
-        }),
+        aggregate,
       } as unknown as Model<OrderDocument>,
       {
-        find: jest.fn().mockReturnValue(jobFind),
+        collection: { name: 'productionjobs' },
       } as unknown as Model<ProductionJobDocument>,
       {
-        find: jest.fn().mockReturnValue(uploadFind),
+        collection: { name: 'uploads' },
       } as unknown as Model<UploadDocument>,
     );
 
     const detail = await service.detail(String(customerId));
 
-    expect(detail.summary).toEqual({ orderCount: 2, outstandingTotal: 125.5 });
-    expect(detail.activeProductionJobs).toHaveLength(1);
-    expect(detail.linkedUploads).toHaveLength(1);
+    expect(detail.orders).toHaveLength(100);
+    expect(detail.summary).toEqual({
+      orderCount: 101,
+      outstandingTotal: 125.5,
+    });
+    expect(detail.activeProductionJobs).toEqual([
+      expect.objectContaining({ jobNumber: 'PJ-OLDER', orderId: olderOrderId }),
+    ]);
+    expect(detail.linkedUploads).toEqual([
+      expect.objectContaining({
+        orderCode: 'GL-OLDER',
+        linkedOrderId: String(olderOrderId),
+      }),
+    ]);
     expect(detail.customer).not.toHaveProperty('outstandingTotal');
+
+    const jobsPipeline = capturedPipelines[1] ?? [];
+    const uploadsPipeline = capturedPipelines[2] ?? [];
+    expect(jobsPipeline[0]).toEqual({ $match: { customerId } });
+    expect(uploadsPipeline[0]).toEqual({ $match: { customerId } });
+    expect(JSON.stringify(jobsPipeline)).not.toContain('$limit');
+    expect(JSON.stringify(uploadsPipeline)).not.toContain('$limit');
+    expect(JSON.stringify(jobsPipeline)).toContain('productionjobs');
+    expect(JSON.stringify(uploadsPipeline)).toContain('uploads');
   });
 
   it('lists only fields matched through explicit server search and pagination', async () => {
