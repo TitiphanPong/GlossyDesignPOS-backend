@@ -1,6 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 import { IS_PUBLIC_KEY } from '../auth/auth.constants';
 import { LineController } from './line.controller';
+import { LineLoginService } from './line-login.service';
 import { LineSignatureService } from './line-signature.service';
 import { LineWebhookService } from './line-webhook.service';
 
@@ -8,11 +9,16 @@ describe('LineController', () => {
   function createController() {
     const assertValid = jest.fn();
     const handle = jest.fn().mockResolvedValue(undefined);
+    const verifyIdToken = jest.fn().mockResolvedValue({
+      userId: 'U123',
+      displayName: 'Glossy Customer',
+    });
     const controller = new LineController(
       { assertValid } as unknown as LineSignatureService,
       { handle } as unknown as LineWebhookService,
+      { verifyIdToken } as unknown as LineLoginService,
     );
-    return { controller, assertValid, handle };
+    return { controller, assertValid, handle, verifyIdToken };
   }
 
   it('keeps the webhook public while authenticating LINE with its signature', () => {
@@ -39,6 +45,19 @@ describe('LineController', () => {
     expect(assertValid.mock.invocationCallOrder[0]).toBeLessThan(
       handle.mock.invocationCallOrder[0],
     );
+  });
+
+  it('returns only verified display data for a LIFF session', async () => {
+    const { controller, verifyIdToken } = createController();
+
+    await expect(
+      controller.createSession({ idToken: 'verified-id-token-value' }),
+    ).resolves.toEqual({
+      verified: true,
+      displayName: 'Glossy Customer',
+      pictureUrl: null,
+    });
+    expect(verifyIdToken).toHaveBeenCalledWith('verified-id-token-value');
   });
 
   it('fails closed when raw body capture is unavailable', async () => {

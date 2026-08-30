@@ -9,7 +9,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { FilterQuery, isValidObjectId, Model, PipelineStage } from 'mongoose';
 import { randomBytes, randomUUID } from 'node:crypto';
 import dayjs from 'dayjs';
-import { CreateUploadDto } from './dto/create-upload.dto';
+import { VerifiedCreateUploadDto } from './dto/create-upload.dto';
 import { UploadResponseDto } from './dto/upload-response.dto';
 import { Upload, UploadDocument } from './schemas/upload.schema';
 import { S3Service } from './s3/s3.service';
@@ -46,7 +46,7 @@ export class UploadsService {
   ) {}
 
   async createUpload(
-    dto: CreateUploadDto,
+    dto: VerifiedCreateUploadDto,
     files: Express.Multer.File[],
   ): Promise<UploadResponseDto> {
     const uploadId = randomUUID();
@@ -212,7 +212,9 @@ export class UploadsService {
     return Buffer.from(value, 'utf8').toString('base64url');
   }
 
-  private buildUploadMetadata(dto: CreateUploadDto): Record<string, string> {
+  private buildUploadMetadata(
+    dto: VerifiedCreateUploadDto,
+  ): Record<string, string> {
     const metadata: Record<string, string> = {
       jobtype: dto.jobType,
     };

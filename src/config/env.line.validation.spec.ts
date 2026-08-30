@@ -37,4 +37,25 @@ describe('LINE environment validation', () => {
       'LINE_CHANNEL_ID, LINE_CHANNEL_SECRET and LINE_CHANNEL_ACCESS_TOKEN must be provided together',
     );
   });
+
+  it('accepts a complete LINE Login credential pair', () => {
+    expect(() =>
+      validateEnv({
+        ...REQUIRED_CONFIG,
+        LINE_LOGIN_CHANNEL_ID: '2011330975',
+        LINE_LOGIN_CHANNEL_SECRET: 'login-channel-secret',
+      }),
+    ).not.toThrow();
+  });
+
+  it('rejects a partial LINE Login configuration', () => {
+    expect(() =>
+      validateEnv({
+        ...REQUIRED_CONFIG,
+        LINE_LOGIN_CHANNEL_ID: '2011330975',
+      }),
+    ).toThrow(
+      'LINE_LOGIN_CHANNEL_ID and LINE_LOGIN_CHANNEL_SECRET must be provided together',
+    );
+  });
 });

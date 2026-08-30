@@ -18,7 +18,7 @@ export class Upload {
   @Prop({ maxlength: 20 })
   phone?: string;
 
-  @Prop()
+  @Prop({ index: true })
   lineUserId?: string;
 
   @Prop({ maxlength: 120 })

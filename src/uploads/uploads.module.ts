@@ -7,11 +7,13 @@ import { S3Service } from './s3/s3.service';
 import { AuthModule } from '../auth/auth.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { Order, OrderSchema } from '../orders/orders.schema';
+import { LineModule } from '../line/line.module';
 
 @Module({
   imports: [
     AuthModule,
     NotificationsModule,
+    LineModule,
     MongooseModule.forFeature([
       { name: Upload.name, schema: UploadSchema },
       { name: Order.name, schema: OrderSchema },

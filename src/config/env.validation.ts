@@ -87,6 +87,16 @@ class EnvironmentVariables {
   @IsString()
   @IsNotEmpty()
   LINE_CHANNEL_ACCESS_TOKEN?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  LINE_LOGIN_CHANNEL_ID?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  LINE_LOGIN_CHANNEL_SECRET?: string;
 }
 
 export function validateEnv(
@@ -137,6 +147,15 @@ export function validateEnv(
   ) {
     throw new Error(
       'Config validation error: LINE_CHANNEL_ID, LINE_CHANNEL_SECRET and LINE_CHANNEL_ACCESS_TOKEN must be provided together',
+    );
+  }
+
+  if (
+    Boolean(validatedConfig.LINE_LOGIN_CHANNEL_ID) !==
+    Boolean(validatedConfig.LINE_LOGIN_CHANNEL_SECRET)
+  ) {
+    throw new Error(
+      'Config validation error: LINE_LOGIN_CHANNEL_ID and LINE_LOGIN_CHANNEL_SECRET must be provided together',
     );
   }
 

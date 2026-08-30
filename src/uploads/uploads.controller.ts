@@ -16,7 +16,10 @@ import {
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { Throttle } from '@nestjs/throttler';
 import { UploadsService } from './uploads.service';
-import { CreateUploadDto } from './dto/create-upload.dto';
+import {
+  CreateUploadDto,
+  type VerifiedCreateUploadDto,
+} from './dto/create-upload.dto';
 import { UploadResponseDto } from './dto/upload-response.dto';
 import { ListUploadsQueryDto } from './dto/list-uploads-query.dto';
 import { UpdateUploadDto } from './dto/update-upload.dto';
@@ -30,6 +33,7 @@ import { BoundedMemoryStorage } from './validators/bounded-memory.storage';
 import { Public, Roles } from '../auth/auth.decorators';
 import { AuditService } from '../auth/audit.service';
 import { AuthenticatedUser } from '../auth/auth.types';
+import { LineLoginService } from '../line/line-login.service';
 
 type AuthRequest = { user?: AuthenticatedUser };
 
@@ -38,6 +42,7 @@ export class UploadsController {
   constructor(
     private readonly uploadsService: UploadsService,
     private readonly auditService: AuditService,
+    private readonly lineLoginService: LineLoginService,
   ) {}
 
   @Get()
@@ -66,7 +71,21 @@ export class UploadsController {
     }
 
     validateUploadedFiles(files);
-    return this.uploadsService.createUpload(dto, files);
+
+    const { lineIdToken, ...uploadFields } = dto;
+    let command: VerifiedCreateUploadDto = uploadFields;
+
+    if (lineIdToken) {
+      const identity = await this.lineLoginService.verifyIdToken(lineIdToken);
+      command = {
+        ...uploadFields,
+        customerName: identity.displayName,
+        lineUserId: identity.userId,
+        displayName: identity.displayName,
+      };
+    }
+
+    return this.uploadsService.createUpload(command, files);
   }
 
   @Get(':id/signed-url')

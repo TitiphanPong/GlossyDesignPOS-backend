@@ -24,13 +24,8 @@ export class CreateUploadDto {
 
   @IsOptional()
   @IsString()
-  @MaxLength(120)
-  lineUserId?: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(120)
-  displayName?: string;
+  @MaxLength(4096)
+  lineIdToken?: string;
 
   @IsOptional()
   @IsString()
@@ -58,3 +53,8 @@ export class CreateUploadDto {
   @IsEnum(JobType)
   jobType: JobType = JobType.OTHER;
 }
+
+export type VerifiedCreateUploadDto = Omit<CreateUploadDto, 'lineIdToken'> & {
+  lineUserId?: string;
+  displayName?: string;
+};

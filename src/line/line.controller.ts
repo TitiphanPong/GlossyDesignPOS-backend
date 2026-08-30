@@ -7,9 +7,11 @@ import {
   Post,
   Req,
 } from '@nestjs/common';
-import { SkipThrottle } from '@nestjs/throttler';
+import { SkipThrottle, Throttle } from '@nestjs/throttler';
 import type { Request } from 'express';
 import { Public } from '../auth/auth.decorators';
+import { LineSessionDto } from './dto/line-session.dto';
+import { LineLoginService } from './line-login.service';
 import { LineSignatureService } from './line-signature.service';
 import { LineWebhookService } from './line-webhook.service';
 
@@ -20,7 +22,21 @@ export class LineController {
   constructor(
     private readonly signatureService: LineSignatureService,
     private readonly webhookService: LineWebhookService,
+    private readonly loginService: LineLoginService,
   ) {}
+
+  @Public()
+  @Throttle({ default: { ttl: 60_000, limit: 30 } })
+  @Post('session')
+  @HttpCode(200)
+  async createSession(@Body() dto: LineSessionDto) {
+    const identity = await this.loginService.verifyIdToken(dto.idToken);
+    return {
+      verified: true as const,
+      displayName: identity.displayName,
+      pictureUrl: identity.pictureUrl ?? null,
+    };
+  }
 
   @Public()
   @SkipThrottle()
