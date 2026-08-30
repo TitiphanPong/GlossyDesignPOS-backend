@@ -46,7 +46,7 @@ export class NotificationResponseDto {
 
   relatedUploadId?: string;
 
-  entityType?: 'order' | 'upload' | 'payment' | 'stock';
+  entityType?: 'order' | 'upload' | 'payment' | 'stock' | 'production_job';
 
   entityId?: string;
 

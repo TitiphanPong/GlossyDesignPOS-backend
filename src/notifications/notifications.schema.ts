@@ -9,6 +9,7 @@ export const NOTIFICATION_TYPES = [
   'payment_outstanding',
   'payment_failed',
   'order_overdue',
+  'production_overdue',
   'order_ready_for_pickup',
   'order_pickup_delayed',
   'upload_received',
@@ -100,8 +101,11 @@ export class Notification {
   relatedUploadId?: string;
 
   // Entity reference for deep linking
-  @Prop({ enum: ['order', 'upload', 'payment', 'stock'], sparse: true })
-  entityType?: 'order' | 'upload' | 'payment' | 'stock';
+  @Prop({
+    enum: ['order', 'upload', 'payment', 'stock', 'production_job'],
+    sparse: true,
+  })
+  entityType?: 'order' | 'upload' | 'payment' | 'stock' | 'production_job';
 
   @Prop({ sparse: true })
   entityId?: string;

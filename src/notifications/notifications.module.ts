@@ -8,6 +8,10 @@ import {
   StockItem,
   StockItemSchema,
 } from '../inventory/schemas/stock-item.schema';
+import {
+  ProductionJob,
+  ProductionJobSchema,
+} from '../production/schemas/production-job.schema';
 
 @Module({
   imports: [
@@ -15,6 +19,7 @@ import {
       { name: Notification.name, schema: NotificationSchema },
       { name: Order.name, schema: OrderSchema },
       { name: StockItem.name, schema: StockItemSchema },
+      { name: ProductionJob.name, schema: ProductionJobSchema },
     ]),
   ],
   controllers: [NotificationsController],
