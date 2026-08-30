@@ -75,6 +75,11 @@ function createFakeModel() {
   return model as unknown as Model<CustomerDisplaySessionDocument>;
 }
 
+function getSessionEventCount(service: CustomerDisplayService) {
+  return (service as unknown as { sessionEvents: Map<string, unknown> })
+    .sessionEvents.size;
+}
+
 describe('CustomerDisplayService', () => {
   it('isolates update ownership and exposes state only through the display token', async () => {
     const service = new CustomerDisplayService(createFakeModel());
@@ -111,5 +116,69 @@ describe('CustomerDisplayService', () => {
     await service.updateState(session.sessionId, 'staff-a', null);
     const payload = await service.getPublicState(session.displayToken);
     expect(payload.state).toBeNull();
+  });
+
+  it('rotates one owned pairing and invalidates the previous public token immediately', async () => {
+    const service = new CustomerDisplayService(createFakeModel());
+    const original = await service.createSession('staff-a');
+    const rotated = await service.rotateSession(original.sessionId, 'staff-a');
+
+    expect(rotated.sessionId).toBe(original.sessionId);
+    expect(rotated.displayToken).not.toBe(original.displayToken);
+    await expect(
+      service.getPublicState(original.displayToken),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    await expect(
+      service.getPublicState(rotated.displayToken),
+    ).resolves.toMatchObject({
+      sessionId: original.sessionId,
+    });
+  });
+
+  it('revokes only an owned pairing and makes its public token unusable', async () => {
+    const service = new CustomerDisplayService(createFakeModel());
+    const session = await service.createSession('staff-a');
+
+    await expect(
+      service.revokeSession(session.sessionId, 'staff-b'),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+
+    await expect(
+      service.rotateSession(session.sessionId, 'staff-b'),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+
+    await expect(
+      service.revokeSession(session.sessionId, 'staff-a'),
+    ).resolves.toEqual({ sessionId: session.sessionId, revoked: true });
+    await expect(
+      service.getPublicState(session.displayToken),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('does not retain process-local Subjects for state updates without an SSE subscriber', async () => {
+    const service = new CustomerDisplayService(createFakeModel());
+    const session = await service.createSession('staff-a');
+
+    await service.updateState(session.sessionId, 'staff-a', null);
+
+    expect(getSessionEventCount(service)).toBe(0);
+  });
+
+  it('cleans the process-local Subject when the last SSE subscriber disconnects', async () => {
+    const service = new CustomerDisplayService(createFakeModel());
+    const session = await service.createSession('staff-a');
+
+    const firstMessage = new Promise<void>((resolve, reject) => {
+      const subscription = service.stream(session.displayToken).subscribe({
+        next: () => {
+          subscription.unsubscribe();
+          resolve();
+        },
+        error: reject,
+      });
+    });
+    await firstMessage;
+
+    expect(getSessionEventCount(service)).toBe(0);
   });
 });
