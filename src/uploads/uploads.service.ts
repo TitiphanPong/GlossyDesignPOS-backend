@@ -381,9 +381,9 @@ export class UploadsService {
         $or: [{ linkedOrderId: reference }, { linkedOrderNumber: reference }],
       });
     }
-    if (query.date) {
-      const dateRange = this.getBangkokDayRange(query.date);
-      groupedMatch.createdAt = { $gte: dateRange.start, $lt: dateRange.end };
+    const createdAtFilter = this.buildCreatedAtFilter(query);
+    if (createdAtFilter) {
+      groupedMatch.createdAt = createdAtFilter;
     }
     if (query.q?.trim()) {
       const safe = query.q.trim().replace(REGEX_SPECIAL_CHARS, String.raw`\$&`);
@@ -657,6 +657,25 @@ export class UploadsService {
         );
       }
     });
+  }
+
+  private buildCreatedAtFilter(
+    query: ListUploadsQueryDto,
+  ): Record<string, Date> | null {
+    if (query.date) {
+      const range = this.getBangkokDayRange(query.date);
+      return { $gte: range.start, $lt: range.end };
+    }
+
+    const createdAt: Record<string, Date> = {};
+    if (query.dateFrom) {
+      createdAt.$gte = this.getBangkokDayRange(query.dateFrom).start;
+    }
+    if (query.dateTo) {
+      createdAt.$lt = this.getBangkokDayRange(query.dateTo).end;
+    }
+
+    return Object.keys(createdAt).length > 0 ? createdAt : null;
   }
 
   private getBangkokDayRange(dateText: string): { start: Date; end: Date } {

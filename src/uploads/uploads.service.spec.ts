@@ -389,6 +389,48 @@ describe('UploadsService', () => {
     expect(serializedPipeline).toContain('"$limit":3');
   });
 
+  it('filters uploads by a Bangkok date range', async () => {
+    const exec = jest
+      .fn()
+      .mockResolvedValue([{ data: [], total: [], summary: [] }]);
+    const aggregate: jest.MockedFunction<
+      (pipeline: PipelineStage[]) => { exec: typeof exec }
+    > = jest.fn().mockReturnValue({ exec });
+    const service = new UploadsService(
+      { aggregate } as unknown as Model<UploadDocument>,
+      {
+        uploadPrivateObject: jest.fn(),
+        createSignedDownloadUrl: jest.fn(),
+      } as unknown as S3Service,
+      createNotificationsService(),
+      {} as Model<OrderDocument>,
+    );
+
+    await service.listUploads({
+      page: 1,
+      limit: 10,
+      dateFrom: '2026-08-25',
+      dateTo: '2026-08-27',
+      sort: StorageListSort.NEWEST,
+    });
+
+    const pipeline = aggregate.mock.calls[0]?.[0];
+    if (!pipeline) throw new Error('Expected aggregation pipeline');
+
+    const matchStage = pipeline.find(
+      (
+        stage,
+      ): stage is { $match: { createdAt?: { $gte?: Date; $lt?: Date } } } =>
+        '$match' in stage && Boolean(stage.$match.createdAt),
+    );
+    expect(matchStage?.$match.createdAt?.$gte).toEqual(
+      new Date('2026-08-25T00:00:00+07:00'),
+    );
+    expect(matchStage?.$match.createdAt?.$lt).toEqual(
+      new Date('2026-08-28T00:00:00+07:00'),
+    );
+  });
+
   it('retries a duplicate intake code without deleting uploaded S3 objects', async () => {
     const create = jest
       .fn()

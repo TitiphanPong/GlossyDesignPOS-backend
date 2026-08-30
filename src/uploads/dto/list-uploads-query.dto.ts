@@ -61,6 +61,14 @@ export class ListUploadsQueryDto {
   date?: string;
 
   @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/u)
+  dateFrom?: string;
+
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/u)
+  dateTo?: string;
+
+  @IsOptional()
   @IsEnum(StorageListSort)
   sort?: StorageListSort = StorageListSort.NEWEST;
 
