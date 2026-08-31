@@ -17,6 +17,10 @@ import { OrderReportingService } from './order-reporting.service';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { TrackingController } from './tracking.controller';
 import { Customer, CustomerSchema } from '../customers/schemas/customer.schema';
+import {
+  ProductionJob,
+  ProductionJobSchema,
+} from '../production/schemas/production-job.schema';
 
 @Module({
   imports: [
@@ -28,6 +32,7 @@ import { Customer, CustomerSchema } from '../customers/schemas/customer.schema';
       { name: Product.name, schema: ProductSchema },
       { name: QuickProduct.name, schema: QuickProductSchema },
       { name: Customer.name, schema: CustomerSchema },
+      { name: ProductionJob.name, schema: ProductionJobSchema },
     ]),
   ],
   controllers: [OrdersController, TrackingController],
