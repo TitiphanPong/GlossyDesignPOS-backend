@@ -32,7 +32,14 @@ type CatalogProduct = {
   variants: CatalogVariant[];
 };
 
+type CatalogResolution = {
+  product: CatalogProduct;
+  quickProductId?: string;
+  mappedVariantId?: string;
+};
+
 export type ResolvedOrderLine = {
+  quickProductId?: string;
   productId?: string;
   productCode?: string;
   typeCode?: string;
@@ -115,13 +122,15 @@ export class OrderPricingService {
       );
     }
     const hasCatalogIdentity = Boolean(
-      item.productId?.trim() ||
+      item.quickProductId?.trim() ||
+        item.productId?.trim() ||
         item.productCode?.trim() ||
         item.typeCode?.trim(),
     );
-    const product = hasCatalogIdentity
+    const catalog = hasCatalogIdentity
       ? await this.findCatalogProduct(orderType, item)
       : null;
+    const product = catalog?.product ?? null;
 
     if (hasCatalogIdentity && !product) {
       throw new BadRequestException(
@@ -133,9 +142,24 @@ export class OrderPricingService {
         `cart.${index} requires a catalog identity or an explicit custom price override.`,
       );
     }
+    if (
+      catalog?.mappedVariantId &&
+      item.variantId?.trim() &&
+      item.variantId.trim() !== catalog.mappedVariantId
+    ) {
+      throw new BadRequestException(
+        `cart.${index} variant does not match the configured quick menu mapping.`,
+      );
+    }
 
     const variant = product
-      ? this.resolveVariant(product, item, index)
+      ? this.resolveVariant(
+          product,
+          catalog?.mappedVariantId
+            ? { ...item, variantId: catalog.mappedVariantId }
+            : item,
+          index,
+        )
       : undefined;
     const unitPrice = item.priceOverride?.unitPrice ?? variant?.price;
     if (unitPrice === undefined) {
@@ -167,6 +191,9 @@ export class OrderPricingService {
       : item.customName!.trim();
 
     return {
+      ...(catalog?.quickProductId
+        ? { quickProductId: catalog.quickProductId }
+        : {}),
       ...(productId ? { productId } : {}),
       ...(product?.code ? { productCode: product.code } : {}),
       ...(product?.typeCode ? { typeCode: product.typeCode } : {}),
@@ -214,24 +241,58 @@ export class OrderPricingService {
   private async findCatalogProduct(
     orderType: OrderType,
     item: OrderItemDto,
-  ): Promise<CatalogProduct | null> {
+  ): Promise<CatalogResolution | null> {
     const identities: Record<string, string>[] = [];
-    if (item.productId?.trim() && isValidObjectId(item.productId.trim())) {
+    if (orderType === 'QUICK_SALE' && item.quickProductId?.trim()) {
+      const quickProductId = item.quickProductId.trim();
+      if (!isValidObjectId(quickProductId)) return null;
+      identities.push({ _id: quickProductId });
+    } else if (
+      item.productId?.trim() &&
+      isValidObjectId(item.productId.trim())
+    ) {
       identities.push({ _id: item.productId.trim() });
     }
-    if (item.productCode?.trim())
-      identities.push({ code: item.productCode.trim() });
-    if (item.typeCode?.trim())
-      identities.push({ typeCode: item.typeCode.trim() });
+    if (!(orderType === 'QUICK_SALE' && item.quickProductId?.trim())) {
+      if (item.productCode?.trim())
+        identities.push({ code: item.productCode.trim() });
+      if (item.typeCode?.trim())
+        identities.push({ typeCode: item.typeCode.trim() });
+    }
     if (!identities.length) return null;
 
     const filter = { active: true, $or: identities };
     if (orderType === 'QUICK_SALE') {
-      const product = await this.quickProductModel.findOne(filter).exec();
-      return product ? this.toCatalogProduct(product) : null;
+      const quickProduct = await this.quickProductModel.findOne(filter).exec();
+      if (!quickProduct) return null;
+
+      const quickProductId = quickProduct._id.toString();
+      if (!quickProduct.productId) {
+        return { product: this.toCatalogProduct(quickProduct), quickProductId };
+      }
+
+      const canonical = await this.productModel
+        .findOne({ _id: quickProduct.productId, active: true })
+        .exec();
+      if (!canonical) return null;
+      const canonicalId = canonical._id.toString();
+      if (
+        item.quickProductId?.trim() &&
+        item.productId?.trim() &&
+        item.productId.trim() !== canonicalId
+      ) {
+        return null;
+      }
+      return {
+        product: this.toCatalogProduct(canonical),
+        quickProductId,
+        ...(quickProduct.variantId
+          ? { mappedVariantId: quickProduct.variantId.toString() }
+          : {}),
+      };
     }
     const product = await this.productModel.findOne(filter).exec();
-    return product ? this.toCatalogProduct(product) : null;
+    return product ? { product: this.toCatalogProduct(product) } : null;
   }
 
   private toCatalogProduct(

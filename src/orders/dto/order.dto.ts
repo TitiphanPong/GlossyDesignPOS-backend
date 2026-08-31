@@ -75,6 +75,11 @@ export class OrderItemDto {
   @IsOptional()
   @IsString()
   @MaxLength(120)
+  quickProductId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
   productId?: string;
 
   @IsOptional()

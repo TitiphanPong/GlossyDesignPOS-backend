@@ -55,6 +55,6 @@ describe('QuickProductService', () => {
 
     expect(find).toHaveBeenCalledWith({});
     expect(sort).toHaveBeenCalledWith({ quickSaleSortOrder: 1, name: 1 });
-    expect(result).toBe(storedProducts);
+    expect(result).toStrictEqual(storedProducts);
   });
 });

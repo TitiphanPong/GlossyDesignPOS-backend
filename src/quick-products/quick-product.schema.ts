@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { HydratedDocument } from 'mongoose';
+import { HydratedDocument, Types } from 'mongoose';
 import type { ProductVariant } from '../products/product.schema';
 
 export type QuickProductDocument = HydratedDocument<QuickProduct>;
@@ -29,6 +29,15 @@ export class QuickProduct {
 
   @Prop({ required: true, index: true })
   quickSaleSortOrder: number;
+
+  @Prop({ type: Types.ObjectId, ref: 'Product', index: true })
+  productId?: Types.ObjectId;
+
+  @Prop({ type: Types.ObjectId })
+  variantId?: Types.ObjectId;
+
+  @Prop({ enum: ['manual', 'p2-08-backfill'] })
+  catalogLinkSource?: 'manual' | 'p2-08-backfill';
 
   @Prop()
   unitLabel?: string;

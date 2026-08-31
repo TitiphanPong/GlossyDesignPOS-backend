@@ -15,6 +15,8 @@ import {
 } from 'class-validator';
 
 export class CreateQuickProductDto {
+  @IsOptional() @IsMongoId() productId?: string;
+  @IsOptional() @IsMongoId() variantId?: string;
   @IsString() @IsNotEmpty() @MaxLength(160) name!: string;
   @IsString() @IsNotEmpty() @MaxLength(80) code!: string;
   @IsOptional() @IsString() @MaxLength(80) typeCode?: string;
@@ -33,6 +35,8 @@ export class CreateQuickProductDto {
 }
 
 export class UpdateQuickProductDto {
+  @IsOptional() @IsMongoId() productId?: string;
+  @IsOptional() @IsMongoId() variantId?: string;
   @IsOptional() @IsString() @IsNotEmpty() @MaxLength(160) name?: string;
   @IsOptional() @IsString() @IsNotEmpty() @MaxLength(80) code?: string;
   @IsOptional() @IsString() @IsNotEmpty() @MaxLength(80) typeCode?: string;

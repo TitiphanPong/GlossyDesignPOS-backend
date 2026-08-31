@@ -289,6 +289,7 @@ export class Order {
   @Prop({
     type: [
       {
+        quickProductId: String,
         productId: String,
         productCode: String,
         typeCode: String,
@@ -340,6 +341,7 @@ export class Order {
   })
   cart!: {
     key?: string;
+    quickProductId?: string;
     productId?: string;
     productCode?: string;
     typeCode?: string;

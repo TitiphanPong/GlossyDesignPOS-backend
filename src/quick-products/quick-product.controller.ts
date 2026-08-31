@@ -9,7 +9,6 @@ import {
   Query,
   Request,
 } from '@nestjs/common';
-import { QuickProduct } from './quick-product.schema';
 import { QuickProductService } from './quick-product.service';
 import {
   CreateQuickProductDto,
@@ -30,9 +29,7 @@ export class QuickProductController {
   ) {}
 
   @Get()
-  findAll(
-    @Query('includeInactive') includeInactive?: string,
-  ): Promise<QuickProduct[]> {
+  findAll(@Query('includeInactive') includeInactive?: string) {
     return this.quickProductService.findAll(includeInactive === 'true');
   }
 
@@ -46,7 +43,7 @@ export class QuickProductController {
     await this.auditService.record(
       request.user ?? null,
       'quick-product.create',
-      { type: 'quick-product', id: product.code },
+      { type: 'quick-product', id: product.quickProductId },
     );
     return product;
   }
@@ -78,7 +75,7 @@ export class QuickProductController {
     await this.auditService.record(
       request.user ?? null,
       'quick-product.update',
-      { type: 'quick-product', id: product.code },
+      { type: 'quick-product', id: product.quickProductId },
     );
     return product;
   }
@@ -90,7 +87,7 @@ export class QuickProductController {
     await this.auditService.record(
       request.user ?? null,
       'quick-product.delete',
-      { type: 'quick-product', id: product.code },
+      { type: 'quick-product', id: product.quickProductId },
     );
     return product;
   }

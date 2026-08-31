@@ -67,6 +67,53 @@ describe('OrderPricingService', () => {
     );
   });
 
+  it('resolves a mapped quick menu to canonical product and variant identities', async () => {
+    const quickProduct = {
+      _id: { toString: () => '61a1c287e53a7024d4ab8150' },
+      name: 'A4 shortcut',
+      code: 'quick-a4',
+      typeCode: 'quick-a4',
+      category: 'Quick',
+      active: true,
+      productId: { toString: () => '61a1c287e53a7024d4ab8142' },
+      variantId: { toString: () => '61a1c287e53a7024d4ab8143' },
+      variants: [],
+    };
+    quickProductModel.findOne.mockReturnValue(queryResult(quickProduct));
+
+    const [line] = await service.resolveCart(
+      'QUICK_SALE',
+      [
+        {
+          quickProductId: '61a1c287e53a7024d4ab8150',
+          productId: '61a1c287e53a7024d4ab8142',
+          variantId: '61a1c287e53a7024d4ab8143',
+          quantity: 2,
+        },
+      ],
+      'staff',
+    );
+
+    expect(quickProductModel.findOne).toHaveBeenCalledWith({
+      active: true,
+      $or: [{ _id: '61a1c287e53a7024d4ab8150' }],
+    });
+    expect(productModel.findOne).toHaveBeenCalledWith({
+      _id: quickProduct.productId,
+      active: true,
+    });
+    expect(line).toEqual(
+      expect.objectContaining({
+        quickProductId: '61a1c287e53a7024d4ab8150',
+        productId: '61a1c287e53a7024d4ab8142',
+        productCode: 'A4',
+        variantName: 'Default',
+        unitPrice: 2.5,
+        totalPrice: 5,
+      }),
+    );
+  });
+
   it('requires an explicit reason for custom/manual pricing at the DTO boundary', async () => {
     const [line] = await service.resolveCart(
       'NORMAL',
