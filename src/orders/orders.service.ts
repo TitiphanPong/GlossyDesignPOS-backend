@@ -47,6 +47,11 @@ import {
   CustomerDocument,
 } from '../customers/schemas/customer.schema';
 import {
+  ProductionJob,
+  ProductionJobDocument,
+  ProductionJobStage,
+} from '../production/schemas/production-job.schema';
+import {
   OrderReportingService,
   OrderReportSummary,
 } from './order-reporting.service';
@@ -60,6 +65,22 @@ type OrderPlainObject = Order & {
 type CreateOrderIdentity = {
   clientDraftId?: string;
   idempotencyKey?: string;
+};
+type ProductionTrackingJob = {
+  stage: ProductionJobStage;
+  stageHistory: Array<{
+    stage: ProductionJobStage;
+    changedAt: Date;
+  }>;
+  updatedAt?: Date;
+};
+type ProductionTrackingProjection = {
+  currentMilestone: Extract<
+    PublicTrackingMilestone,
+    'received' | 'in_progress' | 'ready'
+  >;
+  inProgressAt?: Date;
+  readyAt?: Date;
 };
 type ListOrdersResponse = {
   data: OrderResponseDto[];
@@ -104,6 +125,9 @@ export class OrdersService {
     @Optional()
     @InjectModel(Customer.name)
     private readonly customerModel?: Model<CustomerDocument>,
+    @Optional()
+    @InjectModel(ProductionJob.name)
+    private readonly productionJobModel?: Model<ProductionJobDocument>,
   ) {}
 
   async create(
@@ -860,7 +884,7 @@ export class OrdersService {
         ],
       })
       .exec();
-    return order ? this.buildPublicTrackingResponse(order) : null;
+    return order ? await this.buildPublicTrackingResponse(order) : null;
   }
 
   async lookupPublicTrackingByToken(
@@ -872,51 +896,154 @@ export class OrdersService {
         trackingAccessTokenHash: this.hashTrackingAccessToken(normalizedToken),
       })
       .exec();
-    return order ? this.buildPublicTrackingResponse(order) : null;
+    return order ? await this.buildPublicTrackingResponse(order) : null;
   }
 
-  private buildPublicTrackingResponse(
+  private async buildPublicTrackingResponse(
     order: OrderDocument,
-  ): PublicTrackingResponseDto {
+  ): Promise<PublicTrackingResponseDto> {
     const plain = order.toObject() as OrderPlainObject;
+    const workflowStatus = this.resolveWorkflowStatus(plain);
+    const productionProjection =
+      await this.resolveProductionTrackingProjection(order);
     const milestoneByName = new Map<
       PublicTrackingMilestone,
       { milestone: PublicTrackingMilestone; reachedAt?: Date }
     >();
 
-    const recordMilestone = (status: OrderStatus, reachedAt?: Date): void => {
-      const milestone = PUBLIC_MILESTONE_BY_STATUS[status];
-      if (!milestone || milestoneByName.has(milestone)) return;
+    const setMilestone = (
+      milestone: PublicTrackingMilestone,
+      reachedAt?: Date,
+    ): void => {
+      if (milestoneByName.has(milestone)) return;
       milestoneByName.set(milestone, { milestone, reachedAt });
     };
 
-    for (const historyEntry of plain.statusHistory ?? []) {
-      recordMilestone(historyEntry.status, historyEntry.changedAt);
+    setMilestone('received', plain.createdAt);
+
+    if (productionProjection) {
+      if (productionProjection.inProgressAt) {
+        setMilestone('in_progress', productionProjection.inProgressAt);
+      }
+      if (
+        productionProjection.currentMilestone === 'ready' &&
+        productionProjection.readyAt
+      ) {
+        setMilestone('ready', productionProjection.readyAt);
+      }
+    } else {
+      for (const historyEntry of plain.statusHistory ?? []) {
+        const milestone = PUBLIC_MILESTONE_BY_STATUS[historyEntry.status];
+        if (milestone) setMilestone(milestone, historyEntry.changedAt);
+      }
+      const workflowMilestone = PUBLIC_MILESTONE_BY_STATUS[workflowStatus];
+      if (workflowMilestone) {
+        setMilestone(workflowMilestone, plain.updatedAt ?? plain.createdAt);
+      }
     }
 
-    if (!milestoneByName.has('received')) {
-      milestoneByName.set('received', {
-        milestone: 'received',
-        reachedAt: plain.createdAt,
-      });
+    if (workflowStatus === 'delivered') {
+      const deliveredAt = [...(plain.statusHistory ?? [])]
+        .reverse()
+        .find((entry) => entry.status === 'delivered')?.changedAt;
+      setMilestone(
+        'completed',
+        deliveredAt ?? plain.updatedAt ?? plain.createdAt,
+      );
+    } else if (workflowStatus === 'cancelled') {
+      const cancelledAt = [...(plain.statusHistory ?? [])]
+        .reverse()
+        .find((entry) => entry.status === 'cancelled')?.changedAt;
+      setMilestone(
+        'cancelled',
+        cancelledAt ?? plain.updatedAt ?? plain.createdAt,
+      );
     }
-
-    const workflowStatus = this.resolveWorkflowStatus(plain);
-    recordMilestone(workflowStatus, plain.updatedAt ?? plain.createdAt);
 
     const milestones = [...milestoneByName.values()].sort((left, right) => {
       const leftTime = left.reachedAt?.getTime() ?? Number.MAX_SAFE_INTEGER;
       const rightTime = right.reachedAt?.getTime() ?? Number.MAX_SAFE_INTEGER;
       return leftTime - rightTime;
     });
-    const currentMilestone =
-      PUBLIC_MILESTONE_BY_STATUS[workflowStatus] ?? 'received';
+
+    const currentMilestone: PublicTrackingMilestone =
+      workflowStatus === 'delivered'
+        ? 'completed'
+        : workflowStatus === 'cancelled'
+          ? 'cancelled'
+          : (productionProjection?.currentMilestone ??
+            PUBLIC_MILESTONE_BY_STATUS[workflowStatus] ??
+            'received');
 
     return {
       orderNumber: plain.orderNumber ?? plain.orderId ?? order._id.toString(),
       currentMilestone,
       milestones,
       updatedAt: milestones.at(-1)?.reachedAt ?? plain.updatedAt,
+    };
+  }
+
+  private async resolveProductionTrackingProjection(
+    order: OrderDocument,
+  ): Promise<ProductionTrackingProjection | null> {
+    if (!this.productionJobModel) return null;
+
+    const jobs = (await this.productionJobModel
+      .find({ orderId: order._id })
+      .select('stage stageHistory updatedAt')
+      .lean()
+      .exec()) as ProductionTrackingJob[];
+
+    if (jobs.length === 0) return null;
+
+    const activeStages = new Set<ProductionJobStage>([
+      'producing',
+      'quality_check',
+      'ready',
+      'delivered',
+    ]);
+    const readyStages = new Set<ProductionJobStage>(['ready', 'delivered']);
+
+    const firstActiveAt = (job: ProductionTrackingJob): Date | undefined =>
+      job.stageHistory
+        .filter((entry) => activeStages.has(entry.stage))
+        .map((entry) => entry.changedAt)
+        .sort((left, right) => left.getTime() - right.getTime())[0] ??
+      (activeStages.has(job.stage) ? job.updatedAt : undefined);
+
+    const readyAt = (job: ProductionTrackingJob): Date | undefined =>
+      job.stageHistory
+        .filter((entry) => readyStages.has(entry.stage))
+        .map((entry) => entry.changedAt)
+        .sort((left, right) => left.getTime() - right.getTime())[0] ??
+      (readyStages.has(job.stage) ? job.updatedAt : undefined);
+
+    const activeTimes = jobs
+      .map(firstActiveAt)
+      .filter((value): value is Date => Boolean(value));
+    const inProgressAt = activeTimes.sort(
+      (left, right) => left.getTime() - right.getTime(),
+    )[0];
+
+    const allReady = jobs.every((job) => readyStages.has(job.stage));
+    if (allReady) {
+      const readyTimes = jobs
+        .map(readyAt)
+        .filter((value): value is Date => Boolean(value));
+      const aggregateReadyAt = readyTimes.sort(
+        (left, right) => right.getTime() - left.getTime(),
+      )[0];
+
+      return {
+        currentMilestone: 'ready',
+        inProgressAt,
+        readyAt: aggregateReadyAt,
+      };
+    }
+
+    return {
+      currentMilestone: inProgressAt ? 'in_progress' : 'received',
+      inProgressAt,
     };
   }
 
