@@ -108,7 +108,7 @@ describe('CustomersService', () => {
     });
   });
 
-  it('derives related work from the full customer Order set instead of the 100-row history slice', async () => {
+  it('pages customer Order history by canonical identity while deriving related work from the full Order set', async () => {
     const customerId = new Types.ObjectId();
     const recentOrderIds = Array.from(
       { length: 100 },
@@ -178,9 +178,15 @@ describe('CustomersService', () => {
       } as unknown as Model<UploadDocument>,
     );
 
-    const detail = await service.detail(String(customerId));
+    const detail = await service.detail(String(customerId), {
+      orderPage: 2,
+      orderLimit: 10,
+    });
 
-    expect(detail.orders).toHaveLength(100);
+    expect(orderFind.sort).toHaveBeenCalledWith({ createdAt: -1, _id: -1 });
+    expect(orderFind.skip).toHaveBeenCalledWith(10);
+    expect(orderFind.limit).toHaveBeenCalledWith(10);
+    expect(detail.orderPagination).toEqual({ page: 2, limit: 10, total: 101 });
     expect(detail.summary).toEqual({
       orderCount: 101,
       outstandingTotal: 125.5,

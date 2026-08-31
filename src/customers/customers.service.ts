@@ -14,6 +14,7 @@ import {
 import { Upload, UploadDocument } from '../uploads/schemas/upload.schema';
 import {
   CreateCustomerDto,
+  CustomerDetailQueryDto,
   ListCustomersQueryDto,
   UpdateCustomerDto,
 } from './dto/customer.dto';
@@ -137,19 +138,22 @@ export class CustomersService {
     return updated;
   }
 
-  async detail(id: string) {
+  async detail(id: string, query: CustomerDetailQueryDto = {}) {
     this.assertId(id);
     const customer = await this.customerModel.findById(id).lean().exec();
     if (!customer) throw new NotFoundException('Customer not found.');
     const customerObjectId = new Types.ObjectId(id);
+    const orderPage = query.orderPage ?? 1;
+    const orderLimit = query.orderLimit ?? 10;
     const [orders, summaryRows] = await Promise.all([
       this.orderModel
         .find({ customerId: customerObjectId })
         .select(
           '_id orderNumber orderId saleDate createdAt grandTotal paidAmount remainingTotal status workflowStatus taxInvoice',
         )
-        .sort({ createdAt: -1 })
-        .limit(100)
+        .sort({ createdAt: -1, _id: -1 })
+        .skip((orderPage - 1) * orderLimit)
+        .limit(orderLimit)
         .lean()
         .exec(),
       this.orderModel
@@ -244,6 +248,11 @@ export class CustomersService {
         outstandingTotal: Number(summary.outstandingTotal || 0),
       },
       orders,
+      orderPagination: {
+        page: orderPage,
+        limit: orderLimit,
+        total: Number(summary.orderCount || 0),
+      },
       activeProductionJobs: jobs,
       linkedUploads: uploads,
     };

@@ -1,4 +1,4 @@
-import { INestApplication } from '@nestjs/common';
+import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
@@ -11,6 +11,7 @@ import { CustomersService } from '../src/customers/customers.service';
 describe('Customers privacy boundary (e2e)', () => {
   let app: INestApplication;
   let server: Parameters<typeof request>[0];
+  let detailMock: jest.Mock;
 
   beforeAll(async () => {
     const authService = {
@@ -26,14 +27,16 @@ describe('Customers privacy boundary (e2e)', () => {
         ),
       ),
     };
+    detailMock = jest.fn().mockResolvedValue({
+      customer: { customerCode: 'CUS-1', displayName: 'Private customer' },
+      orders: [],
+      orderPagination: { page: 1, limit: 10, total: 0 },
+    });
     const customersService = {
       list: jest
         .fn()
         .mockResolvedValue({ data: [], page: 1, limit: 20, total: 0 }),
-      detail: jest.fn().mockResolvedValue({
-        customer: { customerCode: 'CUS-1', displayName: 'Private customer' },
-        orders: [],
-      }),
+      detail: detailMock,
       create: jest.fn(),
       update: jest.fn(),
     };
@@ -50,6 +53,7 @@ describe('Customers privacy boundary (e2e)', () => {
       ],
     }).compile();
     app = module.createNestApplication();
+    app.useGlobalPipes(new ValidationPipe({ transform: true }));
     await app.init();
     server = app.getHttpServer() as Parameters<typeof request>[0];
   });
@@ -63,14 +67,19 @@ describe('Customers privacy boundary (e2e)', () => {
       .expect(401);
   });
 
-  it('allows authenticated staff to use the internal directory', async () => {
+  it('allows authenticated staff to page identity-scoped Order history', async () => {
     await request(server)
       .get('/customers')
       .set('Authorization', 'Bearer staff-token')
       .expect(200);
     await request(server)
-      .get('/customers/64b000000000000000000002')
+      .get('/customers/64b000000000000000000002?orderPage=3&orderLimit=25')
       .set('Authorization', 'Bearer staff-token')
       .expect(200);
+
+    expect(detailMock).toHaveBeenLastCalledWith(
+      '64b000000000000000000002',
+      expect.objectContaining({ orderPage: 3, orderLimit: 25 }),
+    );
   });
 });

@@ -124,6 +124,21 @@ export class UpdateCustomerDto extends CreateCustomerDto {
   active?: boolean;
 }
 
+export class CustomerDetailQueryDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  orderPage?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  orderLimit?: number;
+}
+
 export class ListCustomersQueryDto {
   @IsOptional()
   @Transform(optionalTrim)

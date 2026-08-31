@@ -13,6 +13,7 @@ import { AuthenticatedUser } from '../auth/auth.types';
 import { CustomersService } from './customers.service';
 import {
   CreateCustomerDto,
+  CustomerDetailQueryDto,
   ListCustomersQueryDto,
   UpdateCustomerDto,
 } from './dto/customer.dto';
@@ -32,8 +33,8 @@ export class CustomersController {
   }
 
   @Get(':id')
-  detail(@Param('id') id: string) {
-    return this.customersService.detail(id);
+  detail(@Param('id') id: string, @Query() query: CustomerDetailQueryDto) {
+    return this.customersService.detail(id, query);
   }
 
   @Post()
