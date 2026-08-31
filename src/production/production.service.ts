@@ -462,7 +462,12 @@ export class ProductionService {
     const canonicalLines = lineIndexes.flatMap((orderLineIndex) => {
       const line = order.cart[orderLineIndex];
       if (!line?.productId) return [];
-      return [{ orderLineIndex, line: { ...line, productId: line.productId } }];
+      return [
+        {
+          orderLineIndex,
+          line: line as typeof line & { productId: string },
+        },
+      ];
     });
     if (!canonicalLines.length) {
       await this.markMaterialsIssued(job);
