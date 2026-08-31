@@ -50,13 +50,12 @@ describe('InventoryService', () => {
       findById,
       create: jest.fn(),
     } as unknown as Model<StockItemDocument>;
+    const createMovement = jest
+      .fn()
+      .mockImplementation((documents: unknown[]) => Promise.resolve(documents));
     const stockMovementModel = {
       findOne,
-      create: jest
-        .fn()
-        .mockImplementation((documents: unknown[]) =>
-          Promise.resolve(documents),
-        ),
+      create: createMovement,
     } as unknown as Model<StockMovementDocument>;
     const connection = {
       transaction: jest.fn((callback: (value: unknown) => unknown) =>
@@ -72,6 +71,7 @@ describe('InventoryService', () => {
       ),
       stockItemModel,
       stockMovementModel,
+      createMovement,
       findOneAndUpdate,
     };
   }
@@ -136,6 +136,103 @@ describe('InventoryService', () => {
       replay.service.recordMovement(stockItemId, command, actor),
     ).resolves.toBe(created);
     expect(replay.findOneAndUpdate).not.toHaveBeenCalled();
+  });
+
+  it('keeps manual idempotency keys bound to the original actor', async () => {
+    const first = makeService();
+    const command = {
+      type: 'issue' as const,
+      quantity: 2,
+      reason: 'manual material issue',
+      idempotencyKey: 'manual-issue-001',
+    };
+    const created = await first.service.recordMovement(
+      stockItemId,
+      command,
+      actor,
+    );
+    const replay = makeService({ existingMovement: created });
+
+    await expect(
+      replay.service.recordMovement(stockItemId, command, {
+        id: '64b000000000000000000099',
+        username: 'staff-retry',
+      }),
+    ).rejects.toThrow(ConflictException);
+    expect(replay.findOneAndUpdate).not.toHaveBeenCalled();
+  });
+
+  it('replays a global production idempotency command across staff retries', async () => {
+    const first = makeService();
+    const command = {
+      type: 'issue' as const,
+      quantity: 2,
+      reason: 'production job material',
+      idempotencyKey: 'production-job:job-1:issue:item-1',
+      idempotencyScope: 'global' as const,
+      businessReference: { type: 'production-job', id: 'job-1' },
+    };
+    const created = await first.service.recordMovement(
+      stockItemId,
+      command,
+      actor,
+    );
+    const replay = makeService({ existingMovement: created });
+
+    await expect(
+      replay.service.recordMovement(stockItemId, command, {
+        id: '64b000000000000000000099',
+        username: 'staff-retry',
+      }),
+    ).resolves.toBe(created);
+    expect(replay.findOneAndUpdate).not.toHaveBeenCalled();
+  });
+
+  it('persists production order metadata and immutable recipe snapshot context', async () => {
+    const { service, createMovement } = makeService();
+    const command = {
+      type: 'issue' as const,
+      quantity: 2,
+      reason: 'production material issue',
+      idempotencyKey: 'production-job:job-1:issue:item-1',
+      businessReference: { type: 'production-job', id: 'job-1' },
+      orderId: 'order-1',
+      orderNumber: 'OR-0001',
+      productionJobId: 'job-1',
+      reasonMetadata: {
+        triggerStage: 'producing',
+        recipeSnapshot: [{ orderLineIndex: 0, issuedQuantity: 2 }],
+      },
+    };
+
+    const created = await service.recordMovement(stockItemId, command, actor);
+
+    expect(createMovement).toHaveBeenCalledWith(
+      [
+        expect.objectContaining({
+          orderId: 'order-1',
+          orderNumber: 'OR-0001',
+          productionJobId: 'job-1',
+          reasonMetadata: command.reasonMetadata,
+        }),
+      ],
+      { session },
+    );
+
+    const replay = makeService({ existingMovement: created });
+    await expect(
+      replay.service.recordMovement(
+        stockItemId,
+        {
+          ...command,
+          reasonMetadata: {
+            triggerStage: 'producing',
+            recipeSnapshot: [{ orderLineIndex: 0, issuedQuantity: 3 }],
+          },
+        },
+        actor,
+      ),
+    ).rejects.toThrow(ConflictException);
   });
 
   it('rejects reuse of an idempotency key for a different command', async () => {
@@ -208,6 +305,8 @@ describe('InventoryService', () => {
       limit: 25,
       itemId: stockItemId,
       type: 'issue',
+      referenceType: 'production-job',
+      referenceId: 'JOB-0001',
       from: '2026-08-01T00:00:00.000Z',
       to: '2026-08-31T23:59:59.999Z',
     });
@@ -215,6 +314,8 @@ describe('InventoryService', () => {
     expect(countDocuments).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'issue',
+        referenceType: 'production-job',
+        referenceId: 'JOB-0001',
         occurredAt: {
           $gte: new Date('2026-08-01T00:00:00.000Z'),
           $lte: new Date('2026-08-31T23:59:59.999Z'),

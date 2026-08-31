@@ -57,6 +57,13 @@ export class CreateProductionJobDto {
   @ArrayMaxSize(50)
   @IsString({ each: true })
   linkedUploadIds?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(100)
+  @IsInt({ each: true })
+  @Min(0, { each: true })
+  orderLineIndexes?: number[];
 }
 
 export class UpdateProductionJobDto {
@@ -93,6 +100,13 @@ export class UpdateProductionJobDto {
   @ArrayMaxSize(50)
   @IsString({ each: true })
   linkedUploadIds?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(100)
+  @IsInt({ each: true })
+  @Min(0, { each: true })
+  orderLineIndexes?: number[];
 }
 
 export class UpdateProductionJobStageDto {

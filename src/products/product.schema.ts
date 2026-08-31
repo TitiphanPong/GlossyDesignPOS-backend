@@ -4,6 +4,13 @@ import { HydratedDocument } from 'mongoose';
 
 export type ProductDocument = HydratedDocument<Product>;
 
+export type MaterialRecipeComponent = {
+  stockItemId: string;
+  quantity: number;
+  unit: string;
+  conversionFactor?: number;
+};
+
 export type ProductVariant = {
   name: string;
   code?: string;
@@ -14,6 +21,7 @@ export type ProductVariant = {
   size?: string;
   active: boolean;
   sortOrder?: number;
+  recipe?: MaterialRecipeComponent[];
 };
 
 @Schema({ timestamps: true })
@@ -77,9 +85,29 @@ export class Product {
       size: { type: String },
       active: { type: Boolean, default: true },
       sortOrder: { type: Number },
+      recipe: [
+        {
+          stockItemId: { type: String, required: true, trim: true },
+          quantity: { type: Number, required: true, min: 0.000001 },
+          unit: { type: String, required: true, trim: true },
+          conversionFactor: { type: Number, min: 0.000001 },
+          _id: false,
+        },
+      ],
     },
   ])
   variants: ProductVariant[];
+
+  @Prop([
+    {
+      stockItemId: { type: String, required: true, trim: true },
+      quantity: { type: Number, required: true, min: 0.000001 },
+      unit: { type: String, required: true, trim: true },
+      conversionFactor: { type: Number, min: 0.000001 },
+      _id: false,
+    },
+  ])
+  recipe?: MaterialRecipeComponent[];
 }
 
 export const ProductSchema = SchemaFactory.createForClass(Product);

@@ -12,6 +12,28 @@ import {
 } from 'class-validator';
 import { transformOptionalString } from '../../common/transforms/optional-string.transform';
 
+export class MaterialRecipeComponentDto {
+  @IsString()
+  @IsNotEmpty()
+  stockItemId!: string;
+
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0.000001)
+  quantity!: number;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(80)
+  unit!: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0.000001)
+  conversionFactor?: number;
+}
+
 export class ProductVariantDto {
   @IsString()
   @IsNotEmpty()
@@ -57,6 +79,12 @@ export class ProductVariantDto {
   @Type(() => Number)
   @IsNumber()
   sortOrder?: number;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => MaterialRecipeComponentDto)
+  recipe?: MaterialRecipeComponentDto[];
 }
 
 export class CreateProductDto {
@@ -127,6 +155,12 @@ export class CreateProductDto {
   @Type(() => Number)
   @IsNumber()
   quickSaleSortOrder?: number;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => MaterialRecipeComponentDto)
+  recipe?: MaterialRecipeComponentDto[];
 
   @IsArray()
   @ValidateNested({ each: true })
@@ -206,6 +240,12 @@ export class UpdateProductDto {
   @Type(() => Number)
   @IsNumber()
   quickSaleSortOrder?: number;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => MaterialRecipeComponentDto)
+  recipe?: MaterialRecipeComponentDto[];
 
   @IsOptional()
   @IsArray()

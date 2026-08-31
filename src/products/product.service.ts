@@ -8,8 +8,14 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { FilterQuery, isValidObjectId, Model } from 'mongoose';
 import {
+  StockItem,
+  StockItemDocument,
+} from '../inventory/schemas/stock-item.schema';
+import {
   CreateProductDto,
   ListProductsQueryDto,
+  MaterialRecipeComponentDto,
+  ProductVariantDto,
   UpdateProductDto,
 } from './dto/product.dto';
 import { Product, ProductDocument } from './product.schema';
@@ -21,6 +27,8 @@ export class ProductService {
   constructor(
     @InjectModel(Product.name)
     private readonly productModel: Model<ProductDocument>,
+    @InjectModel(StockItem.name)
+    private readonly stockItemModel: Model<StockItemDocument>,
   ) {}
 
   async findAll(query: ListProductsQueryDto): Promise<Product[]> {
@@ -59,6 +67,7 @@ export class ProductService {
 
   async create(data: CreateProductDto): Promise<Product> {
     this.validateVariants(data.variants);
+    await this.validateRecipes(data.recipe, data.variants);
     const normalized = this.normalizeCreate(data);
 
     try {
@@ -75,6 +84,7 @@ export class ProductService {
     if (data.variants) {
       this.validateVariants(data.variants);
     }
+    await this.validateRecipes(data.recipe, data.variants);
 
     const updated = await this.productModel
       .findOneAndUpdate(
@@ -127,10 +137,12 @@ export class ProductService {
       code,
       typeCode,
       active: data.active ?? true,
+      recipe: this.normalizeRecipe(data.recipe),
       variants: data.variants.map((variant) => ({
         ...variant,
         code: variant.code ? this.slugify(variant.code) : undefined,
         active: variant.active ?? true,
+        recipe: this.normalizeRecipe(variant.recipe),
       })),
     };
   }
@@ -141,6 +153,9 @@ export class ProductService {
       ...rest,
       ...(data.code ? { code: this.slugify(data.code) } : {}),
       ...(data.typeCode ? { typeCode: this.slugify(data.typeCode) } : {}),
+      ...(data.recipe !== undefined
+        ? { recipe: this.normalizeRecipe(data.recipe) }
+        : {}),
     };
 
     if (variants) {
@@ -148,10 +163,67 @@ export class ProductService {
         ...variant,
         code: variant.code ? this.slugify(variant.code) : undefined,
         active: variant.active ?? true,
+        recipe: this.normalizeRecipe(variant.recipe),
       }));
     }
 
     return normalized;
+  }
+
+  private async validateRecipes(
+    productRecipe?: MaterialRecipeComponentDto[],
+    variants?: ProductVariantDto[],
+  ): Promise<void> {
+    const recipes = [
+      ...(productRecipe ? [productRecipe] : []),
+      ...(variants ?? []).flatMap((variant) =>
+        variant.recipe ? [variant.recipe] : [],
+      ),
+    ];
+    const components = recipes.flat();
+    if (!components.length) return;
+
+    const ids = [
+      ...new Set(components.map((component) => component.stockItemId.trim())),
+    ];
+    if (ids.some((id) => !isValidObjectId(id))) {
+      throw new BadRequestException(
+        'Recipe stockItemId must be a valid stock item id.',
+      );
+    }
+
+    const items = await this.stockItemModel
+      .find({ _id: { $in: ids }, active: { $ne: false } })
+      .select({ _id: 1, unit: 1 })
+      .lean()
+      .exec();
+    const itemById = new Map(items.map((item) => [String(item._id), item]));
+
+    for (const component of components) {
+      const stockItemId = component.stockItemId.trim();
+      const item = itemById.get(stockItemId);
+      if (!item) {
+        throw new BadRequestException(
+          `Recipe stock item "${stockItemId}" was not found or is inactive.`,
+        );
+      }
+      const recipeUnit = component.unit.trim().toLowerCase();
+      const stockUnit = item.unit.trim().toLowerCase();
+      if (recipeUnit !== stockUnit && !component.conversionFactor) {
+        throw new BadRequestException(
+          `Recipe unit "${component.unit}" requires conversionFactor for stock unit "${item.unit}".`,
+        );
+      }
+    }
+  }
+
+  private normalizeRecipe(recipe?: MaterialRecipeComponentDto[]) {
+    return recipe?.map((component) => ({
+      stockItemId: component.stockItemId.trim(),
+      quantity: component.quantity,
+      unit: component.unit.trim(),
+      conversionFactor: component.conversionFactor,
+    }));
   }
 
   private validateVariants(variants: CreateProductDto['variants']): void {

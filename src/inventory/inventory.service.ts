@@ -41,6 +41,11 @@ export type RecordStockMovementCommand = {
     type: string;
     id: string;
   };
+  orderId?: string;
+  orderNumber?: string;
+  productionJobId?: string;
+  reasonMetadata?: Record<string, unknown>;
+  idempotencyScope?: 'actor' | 'global';
 };
 
 export type ListStockMovementsQuery = {
@@ -50,6 +55,8 @@ export type ListStockMovementsQuery = {
   type?: StockMovementType;
   from?: string;
   to?: string;
+  referenceType?: string;
+  referenceId?: string;
   q?: string;
 };
 
@@ -188,6 +195,12 @@ export class InventoryService {
       filter.stockItemId = new Types.ObjectId(query.itemId);
     }
     if (query.type) filter.type = query.type;
+    if (query.referenceType?.trim()) {
+      filter.referenceType = query.referenceType.trim();
+    }
+    if (query.referenceId?.trim()) {
+      filter.referenceId = query.referenceId.trim();
+    }
 
     if (query.from || query.to) {
       const occurredAt: Record<string, Date> = {};
@@ -396,6 +409,10 @@ export class InventoryService {
               occurredAt: new Date(),
               referenceType: normalized.businessReference?.type,
               referenceId: normalized.businessReference?.id,
+              orderId: normalized.orderId,
+              orderNumber: normalized.orderNumber,
+              productionJobId: normalized.productionJobId,
+              reasonMetadata: normalized.reasonMetadata,
               idempotencyKey: normalized.idempotencyKey,
               commandFingerprint: fingerprint,
             },
@@ -453,11 +470,18 @@ export class InventoryService {
       );
     }
 
+    const orderId = command.orderId?.trim() || undefined;
+    const orderNumber = command.orderNumber?.trim() || undefined;
+    const productionJobId = command.productionJobId?.trim() || undefined;
+
     return {
       ...command,
       reason,
       idempotencyKey: idempotencyKey || undefined,
       businessReference,
+      orderId,
+      orderNumber,
+      productionJobId,
     };
   }
 
@@ -470,9 +494,30 @@ export class InventoryService {
     command: RecordStockMovementCommand,
     actor: StockActor,
   ): string {
-    return createHash('sha256')
-      .update(
-        JSON.stringify({
+    const hasExtendedContext = Boolean(
+      command.orderId ||
+        command.orderNumber ||
+        command.productionJobId ||
+        command.reasonMetadata ||
+        command.idempotencyScope === 'global',
+    );
+    const payload = hasExtendedContext
+      ? {
+          fingerprintVersion: 2,
+          idempotencyScope: command.idempotencyScope ?? 'actor',
+          stockItemId,
+          type: command.type,
+          quantity: command.quantity,
+          reason: command.reason,
+          referenceType: command.businessReference?.type ?? null,
+          referenceId: command.businessReference?.id ?? null,
+          orderId: command.orderId ?? null,
+          orderNumber: command.orderNumber ?? null,
+          productionJobId: command.productionJobId ?? null,
+          reasonMetadata: command.reasonMetadata ?? null,
+          actorId: command.idempotencyScope === 'global' ? null : actor.id,
+        }
+      : {
           stockItemId,
           type: command.type,
           quantity: command.quantity,
@@ -480,9 +525,9 @@ export class InventoryService {
           referenceType: command.businessReference?.type ?? null,
           referenceId: command.businessReference?.id ?? null,
           actorId: actor.id,
-        }),
-      )
-      .digest('hex');
+        };
+
+    return createHash('sha256').update(JSON.stringify(payload)).digest('hex');
   }
 
   private assertIdempotentReplay(

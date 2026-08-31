@@ -19,6 +19,7 @@ const STOCK_MANAGEMENT_MOVEMENT_TYPES = [
   'issue',
   'adjustment_in',
   'adjustment_out',
+  'waste',
 ] as const;
 
 export class ListStockItemsQueryDto {
@@ -60,6 +61,16 @@ export class ListStockMovementsQueryDto {
   @IsOptional()
   @IsDateString()
   to?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  referenceType?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(160)
+  referenceId?: string;
 
   @IsOptional()
   @IsString()

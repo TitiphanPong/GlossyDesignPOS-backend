@@ -56,6 +56,15 @@ export class ProductionJob {
   @Prop({ type: [String], default: [] })
   linkedUploadIds!: string[];
 
+  @Prop({ type: [Number], default: [] })
+  orderLineIndexes!: number[];
+
+  @Prop({ type: Date })
+  materialIssueStartedAt?: Date;
+
+  @Prop({ type: Date })
+  materialIssuedAt?: Date;
+
   @Prop({
     type: String,
     enum: PRODUCTION_JOB_STAGES,

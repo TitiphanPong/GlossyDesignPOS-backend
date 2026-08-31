@@ -98,12 +98,18 @@ export class InventoryController {
   ) {
     const user = request.user;
     if (!user) throw new Error('Authenticated user context is required.');
-    const isAdjustment =
-      dto.type === 'adjustment_in' || dto.type === 'adjustment_out';
-    if (isAdjustment && user.role !== 'manager' && user.role !== 'admin') {
-      // Keep manual corrections privileged while normal receive/issue remains available to authenticated staff.
+    const isPrivilegedMovement =
+      dto.type === 'adjustment_in' ||
+      dto.type === 'adjustment_out' ||
+      dto.type === 'waste';
+    if (
+      isPrivilegedMovement &&
+      user.role !== 'manager' &&
+      user.role !== 'admin'
+    ) {
+      // Keep manual corrections and waste declarations privileged while normal receive/issue remains available to authenticated staff.
       throw new ForbiddenException(
-        'Manual stock adjustment requires manager or admin role.',
+        'Manual stock adjustment or waste declaration requires manager or admin role.',
       );
     }
     const movement = await this.inventoryService.recordMovement(

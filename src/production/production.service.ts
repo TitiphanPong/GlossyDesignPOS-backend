@@ -10,8 +10,15 @@ import { MongoServerError } from 'mongodb';
 import { isValidObjectId, Model, PipelineStage, Types } from 'mongoose';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { User, UserDocument } from '../auth/schemas/user.schema';
+import { InventoryService } from '../inventory/inventory.service';
 import { PublicTrackingMilestone } from '../orders/dto/tracking-response.dto';
 import { Order, OrderDocument } from '../orders/orders.schema';
+import {
+  MaterialRecipeComponent,
+  Product,
+  ProductDocument,
+  ProductVariant,
+} from '../products/product.schema';
 import { Upload, UploadDocument } from '../uploads/schemas/upload.schema';
 import {
   CreateProductionJobDto,
@@ -53,6 +60,36 @@ const COMPLETE_STAGES = new Set<ProductionJobStage>(
   COMPLETE_PRODUCTION_JOB_STAGES,
 );
 
+type RecipeVariant = ProductVariant & {
+  _id?: Types.ObjectId | string;
+};
+
+type ResolvedLineRecipe = {
+  components: MaterialRecipeComponent[];
+  source: 'product' | 'variant';
+  variantId?: string;
+};
+
+type MaterialIssueContribution = {
+  orderLineIndex: number;
+  productId: string;
+  productCode?: string;
+  variantId?: string;
+  lineName: string;
+  lineQuantity: number;
+  recipeSource: 'product' | 'variant';
+  recipeQuantity: number;
+  recipeUnit: string;
+  conversionFactor?: number;
+  stockUnit: string;
+  issuedQuantity: number;
+};
+
+type MaterialIssueRequirement = {
+  quantity: number;
+  contributions: MaterialIssueContribution[];
+};
+
 @Injectable()
 export class ProductionService {
   constructor(
@@ -60,10 +97,13 @@ export class ProductionService {
     private readonly productionJobModel: Model<ProductionJobDocument>,
     @InjectModel(Order.name)
     private readonly orderModel: Model<OrderDocument>,
+    @InjectModel(Product.name)
+    private readonly productModel: Model<ProductDocument>,
     @InjectModel(Upload.name)
     private readonly uploadModel: Model<UploadDocument>,
     @InjectModel(User.name)
     private readonly userModel: Model<UserDocument>,
+    private readonly inventoryService: InventoryService,
   ) {}
 
   async createJob(
@@ -84,6 +124,11 @@ export class ProductionService {
       dto.linkedUploadIds ?? [],
       dto.orderId,
     );
+    const orderLineIndexes = this.validateOrderLineIndexes(
+      dto.orderLineIndexes,
+      order.cart.length,
+    );
+    await this.assertOrderLineIndexesAvailable(dto.orderId, orderLineIndexes);
     const orderNumber = order.orderNumber ?? order.orderId ?? String(order._id);
     const changedAt = new Date();
 
@@ -101,6 +146,7 @@ export class ProductionService {
           assigneeUsername: assignee?.username,
           internalNote: dto.internalNote?.trim() || undefined,
           linkedUploadIds,
+          orderLineIndexes,
           stage: 'file_check',
           stageHistory: [
             { stage: 'file_check', changedAt, changedBy: actor.id },
@@ -276,28 +322,65 @@ export class ProductionService {
         String(current.orderId),
       );
     }
+    if (dto.orderLineIndexes !== undefined) {
+      if (current.materialIssueStartedAt || current.materialIssuedAt) {
+        throw new ConflictException(
+          'Production job order line mapping cannot change after material issue has started.',
+        );
+      }
+      const order = await this.orderModel.findById(current.orderId).exec();
+      if (!order) {
+        throw new NotFoundException(
+          `Order "${String(current.orderId)}" not found.`,
+        );
+      }
+      const orderLineIndexes = this.validateOrderLineIndexes(
+        dto.orderLineIndexes,
+        order.cart.length,
+      );
+      await this.assertOrderLineIndexesAvailable(
+        current.orderId,
+        orderLineIndexes,
+        id,
+      );
+      update.orderLineIndexes = orderLineIndexes;
+    }
     if (!Object.keys(update).length) {
       throw new BadRequestException(
         'At least one production job field is required.',
       );
     }
 
+    const updateFilter: Record<string, unknown> = { _id: id };
+    if (dto.orderLineIndexes !== undefined) {
+      updateFilter.materialIssueStartedAt = { $exists: false };
+      updateFilter.materialIssuedAt = { $exists: false };
+    }
     const updated = await this.productionJobModel
-      .findByIdAndUpdate(
-        id,
+      .findOneAndUpdate(
+        updateFilter,
         { $set: update },
         { new: true, runValidators: true },
       )
       .exec();
-    if (!updated)
+    if (!updated) {
+      if (dto.orderLineIndexes !== undefined) {
+        const latest = await this.productionJobModel.findById(id).exec();
+        if (latest) {
+          throw new ConflictException(
+            'Production job order line mapping cannot change after material issue has started.',
+          );
+        }
+      }
       throw new NotFoundException(`Production job "${id}" not found.`);
+    }
     return this.toResponse(updated);
   }
 
   async updateStage(
     id: string,
     target: ProductionJobStage,
-    actor: Pick<AuthenticatedUser, 'id'>,
+    actor: Pick<AuthenticatedUser, 'id' | 'username'>,
   ) {
     this.assertObjectId(id, 'production job id');
     const current = await this.productionJobModel.findById(id).exec();
@@ -310,6 +393,10 @@ export class ProductionService {
       throw new ConflictException(
         `Production job cannot transition from ${current.stage} to ${target}.`,
       );
+    }
+
+    if (current.stage === 'queued' && target === 'producing') {
+      await this.issueJobMaterials(current, actor);
     }
 
     const changedAt = new Date();
@@ -334,6 +421,308 @@ export class ProductionService {
       );
     }
     return this.toResponse(updated);
+  }
+
+  private async issueJobMaterials(
+    job: ProductionJobDocument,
+    actor: Pick<AuthenticatedUser, 'id' | 'username'>,
+  ): Promise<void> {
+    if (job.materialIssuedAt) return;
+
+    const order = await this.orderModel.findById(job.orderId).exec();
+    if (!order) {
+      throw new NotFoundException(`Order "${String(job.orderId)}" not found.`);
+    }
+
+    const explicitIndexes = job.orderLineIndexes ?? [];
+    let lineIndexes = explicitIndexes;
+    if (!lineIndexes.length) {
+      const siblingCount = await this.productionJobModel
+        .countDocuments({ orderId: job.orderId })
+        .exec();
+      if (
+        siblingCount > 1 &&
+        order.cart.some((line) => Boolean(line.productId))
+      ) {
+        throw new BadRequestException(
+          'Multiple production jobs require explicit order line mapping before materials can be issued.',
+        );
+      }
+      lineIndexes = order.cart.map((_, index) => index);
+    }
+
+    if (explicitIndexes.length) {
+      await this.assertOrderLineIndexesAvailable(
+        job.orderId,
+        lineIndexes,
+        String(job._id),
+      );
+    }
+
+    const canonicalLines = lineIndexes.flatMap((orderLineIndex) => {
+      const line = order.cart[orderLineIndex];
+      if (!line?.productId) return [];
+      return [{ orderLineIndex, line: { ...line, productId: line.productId } }];
+    });
+    if (!canonicalLines.length) {
+      await this.markMaterialsIssued(job);
+      return;
+    }
+
+    const productIds = [
+      ...new Set(canonicalLines.map(({ line }) => line.productId)),
+    ];
+    for (const productId of productIds) {
+      if (!isValidObjectId(productId)) {
+        throw new BadRequestException(
+          `Order contains invalid canonical product id "${productId}".`,
+        );
+      }
+    }
+    const products = await this.productModel
+      .find({
+        _id: { $in: productIds },
+        active: { $ne: false },
+        deletedAt: null,
+      })
+      .exec();
+    const productById = new Map(
+      products.map((product) => [String(product._id), product]),
+    );
+
+    const requirements = new Map<string, MaterialIssueRequirement>();
+    for (const { orderLineIndex, line } of canonicalLines) {
+      const product = productById.get(line.productId);
+      if (!product) {
+        throw new BadRequestException(
+          `Canonical product "${line.productId}" is unavailable for material issue.`,
+        );
+      }
+      const recipe = this.resolveLineRecipe(product, line);
+      if (!recipe.components.length) {
+        throw new BadRequestException(
+          `Material recipe is missing for order line "${line.name}".`,
+        );
+      }
+      for (const component of recipe.components) {
+        const resolved = await this.resolveStockQuantity(component, line.qty);
+        const current = requirements.get(component.stockItemId) ?? {
+          quantity: 0,
+          contributions: [],
+        };
+        current.quantity += resolved.quantity;
+        current.contributions.push({
+          orderLineIndex,
+          productId: line.productId,
+          productCode: line.productCode,
+          variantId: recipe.variantId,
+          lineName: line.name,
+          lineQuantity: line.qty,
+          recipeSource: recipe.source,
+          recipeQuantity: component.quantity,
+          recipeUnit: component.unit,
+          conversionFactor: component.conversionFactor,
+          stockUnit: resolved.stockUnit,
+          issuedQuantity: resolved.quantity,
+        });
+        requirements.set(component.stockItemId, current);
+      }
+    }
+
+    await this.lockMaterialIssue(job, explicitIndexes);
+
+    for (const [stockItemId, requirement] of requirements) {
+      await this.inventoryService.recordMovement(
+        stockItemId,
+        {
+          type: 'issue',
+          quantity: requirement.quantity,
+          reason: `Production ${job.jobNumber} / Order ${job.orderNumber}`,
+          idempotencyKey: `production-job:${String(job._id)}:issue:${stockItemId}`,
+          idempotencyScope: 'global',
+          businessReference: {
+            type: 'production-job',
+            id: String(job._id),
+          },
+          orderId: String(order._id),
+          orderNumber: job.orderNumber,
+          productionJobId: String(job._id),
+          reasonMetadata: {
+            triggerStage: 'producing',
+            productionJobNumber: job.jobNumber,
+            orderLineIndexes: lineIndexes,
+            recipeSnapshot: requirement.contributions,
+          },
+        },
+        actor,
+      );
+    }
+
+    await this.markMaterialsIssued(job);
+  }
+
+  private resolveLineRecipe(
+    product: ProductDocument,
+    line: OrderDocument['cart'][number],
+  ): ResolvedLineRecipe {
+    const variantId = line.variant?.id ?? line.variant?._id;
+    if (variantId) {
+      const variant = (product.variants as RecipeVariant[]).find(
+        (candidate) => String(candidate._id) === variantId,
+      );
+      if (!variant) {
+        throw new BadRequestException(
+          `Canonical variant "${variantId}" is unavailable for order line "${line.name}".`,
+        );
+      }
+      if (variant.recipe?.length) {
+        return { components: variant.recipe, source: 'variant', variantId };
+      }
+    }
+    return {
+      components: product.recipe ?? [],
+      source: 'product',
+      variantId: variantId || undefined,
+    };
+  }
+
+  private async resolveStockQuantity(
+    component: MaterialRecipeComponent,
+    lineQuantity: number,
+  ): Promise<{ quantity: number; stockUnit: string }> {
+    const stockItem = await this.inventoryService.getStockItem(
+      component.stockItemId,
+    );
+    if (stockItem.active === false) {
+      throw new ConflictException(
+        `Stock item "${component.stockItemId}" is inactive.`,
+      );
+    }
+    const sameUnit =
+      stockItem.unit.trim().toLowerCase() ===
+      component.unit.trim().toLowerCase();
+    if (!sameUnit && !component.conversionFactor) {
+      throw new BadRequestException(
+        `Recipe unit "${component.unit}" requires a conversion factor for stock unit "${stockItem.unit}".`,
+      );
+    }
+    const factor = sameUnit ? 1 : (component.conversionFactor ?? 1);
+    return {
+      quantity: component.quantity * lineQuantity * factor,
+      stockUnit: stockItem.unit,
+    };
+  }
+
+  private async lockMaterialIssue(
+    job: ProductionJobDocument,
+    expectedOrderLineIndexes: number[],
+  ): Promise<void> {
+    if (job.materialIssuedAt || job.materialIssueStartedAt) return;
+
+    const startedAt = new Date();
+    const mappingFilter = expectedOrderLineIndexes.length
+      ? { orderLineIndexes: expectedOrderLineIndexes }
+      : {
+          $or: [
+            { orderLineIndexes: [] },
+            { orderLineIndexes: { $exists: false } },
+          ],
+        };
+    const locked = await this.productionJobModel
+      .findOneAndUpdate(
+        {
+          _id: job._id,
+          materialIssueStartedAt: { $exists: false },
+          materialIssuedAt: { $exists: false },
+          ...mappingFilter,
+        },
+        { $set: { materialIssueStartedAt: startedAt } },
+        { new: true, runValidators: true },
+      )
+      .exec();
+
+    if (locked) {
+      job.materialIssueStartedAt = locked.materialIssueStartedAt ?? startedAt;
+      return;
+    }
+
+    const latest = await this.productionJobModel.findById(job._id).exec();
+    if (!latest) {
+      throw new NotFoundException(
+        `Production job "${String(job._id)}" not found.`,
+      );
+    }
+    if (latest.materialIssuedAt) {
+      job.materialIssueStartedAt = latest.materialIssueStartedAt;
+      job.materialIssuedAt = latest.materialIssuedAt;
+      return;
+    }
+
+    const latestIndexes = latest.orderLineIndexes ?? [];
+    const sameMapping =
+      latestIndexes.length === expectedOrderLineIndexes.length &&
+      latestIndexes.every(
+        (value, index) => value === expectedOrderLineIndexes[index],
+      );
+    if (latest.materialIssueStartedAt && sameMapping) {
+      job.materialIssueStartedAt = latest.materialIssueStartedAt;
+      return;
+    }
+
+    throw new ConflictException(
+      'Production job order line mapping changed while material issue was starting. Refresh and retry.',
+    );
+  }
+
+  private async markMaterialsIssued(job: ProductionJobDocument): Promise<void> {
+    const issuedAt = new Date();
+    await this.productionJobModel
+      .findOneAndUpdate(
+        { _id: job._id, materialIssuedAt: { $exists: false } },
+        { $set: { materialIssuedAt: issuedAt } },
+        { runValidators: true },
+      )
+      .exec();
+    job.materialIssuedAt = issuedAt;
+  }
+
+  private validateOrderLineIndexes(
+    indexes: number[] | undefined,
+    lineCount: number,
+  ): number[] {
+    if (!indexes?.length) return [];
+    const unique = [...new Set(indexes)];
+    if (unique.some((index) => index < 0 || index >= lineCount)) {
+      throw new BadRequestException(
+        'Production job order line mapping is invalid.',
+      );
+    }
+    return unique.sort((left, right) => left - right);
+  }
+
+  private async assertOrderLineIndexesAvailable(
+    orderId: string | Types.ObjectId,
+    indexes: number[],
+    excludeJobId?: string,
+  ): Promise<void> {
+    if (!indexes.length) return;
+    const filter: Record<string, unknown> = {
+      orderId,
+      orderLineIndexes: { $in: indexes },
+    };
+    if (excludeJobId) filter._id = { $ne: excludeJobId };
+    const overlapping = await this.productionJobModel
+      .findOne(filter)
+      .select({ jobNumber: 1, orderLineIndexes: 1 })
+      .lean()
+      .exec();
+    if (!overlapping) return;
+    const overlap = (overlapping.orderLineIndexes ?? []).filter((index) =>
+      indexes.includes(index),
+    );
+    throw new ConflictException(
+      `Order line mapping overlaps production job ${overlapping.jobNumber ?? String(overlapping._id)} at line(s): ${overlap.map((index) => index + 1).join(', ')}.`,
+    );
   }
 
   private async resolveAssignee(userId?: string) {
@@ -414,6 +803,8 @@ export class ProductionService {
         : null,
       internalNote: job.internalNote,
       linkedUploadIds: [...job.linkedUploadIds],
+      orderLineIndexes: [...(job.orderLineIndexes ?? [])],
+      materialIssuedAt: job.materialIssuedAt,
       stage: job.stage,
       customerMilestone: CUSTOMER_MILESTONE_BY_STAGE[job.stage],
       stageHistory: job.stageHistory.map((entry) => ({

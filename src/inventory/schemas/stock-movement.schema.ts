@@ -61,6 +61,18 @@ export class StockMovement {
   @Prop({ trim: true, maxlength: 160 })
   referenceId?: string;
 
+  @Prop({ trim: true, maxlength: 160, index: true })
+  orderId?: string;
+
+  @Prop({ trim: true, maxlength: 160, index: true })
+  orderNumber?: string;
+
+  @Prop({ trim: true, maxlength: 160, index: true })
+  productionJobId?: string;
+
+  @Prop({ type: Object })
+  reasonMetadata?: Record<string, unknown>;
+
   @Prop({ unique: true, sparse: true, trim: true, maxlength: 128 })
   idempotencyKey?: string;
 
