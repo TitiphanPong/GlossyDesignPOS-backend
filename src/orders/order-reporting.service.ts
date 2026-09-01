@@ -349,7 +349,8 @@ export class OrderReportingService {
   }
 
   getSortStage(sort: ListOrdersQueryDto['sort']): PipelineStage.Sort['$sort'] {
-    if (sort === 'order_number_desc') return { _effectiveOrderNumber: -1, _id: -1 };
+    if (sort === 'order_number_desc')
+      return { _effectiveOrderNumber: -1, _id: -1 };
     if (sort === 'oldest') return { _effectiveSaleDate: 1, _id: 1 };
     if (sort === 'amount_desc') return { _effectiveTotal: -1, _id: -1 };
     if (sort === 'amount_asc') return { _effectiveTotal: 1, _id: 1 };

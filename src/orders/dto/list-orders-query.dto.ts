@@ -97,7 +97,12 @@ export class ListOrdersQueryDto {
 
   @IsOptional()
   @IsIn(['order_number_desc', 'newest', 'oldest', 'amount_desc', 'amount_asc'])
-  sort?: 'order_number_desc' | 'newest' | 'oldest' | 'amount_desc' | 'amount_asc';
+  sort?:
+    | 'order_number_desc'
+    | 'newest'
+    | 'oldest'
+    | 'amount_desc'
+    | 'amount_asc';
 }
 
 export class ExportOrdersQueryDto extends ListOrdersQueryDto {
