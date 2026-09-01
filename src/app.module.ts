@@ -19,6 +19,7 @@ import { ProductionModule } from './production/production.module';
 import { CustomersModule } from './customers/customers.module';
 import { CustomerDisplayModule } from './customer-display/customer-display.module';
 import { LineModule } from './line/line.module';
+import { QuickSaleV2Module } from './quick-sale-v2/quick-sale-v2.module';
 
 @Module({
   imports: [
@@ -46,6 +47,7 @@ import { LineModule } from './line/line.module';
     CustomersModule,
     CustomerDisplayModule,
     LineModule,
+    QuickSaleV2Module,
   ],
   controllers: [HealthController],
   providers: [
