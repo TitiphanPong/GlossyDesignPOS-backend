@@ -88,6 +88,20 @@ describe('OrderReportingService', () => {
     expect(serialized).toContain('pending');
   });
 
+  it('sorts order lists by effective order number descending when requested', () => {
+    expect(service.getSortStage('order_number_desc')).toEqual({
+      _effectiveOrderNumber: -1,
+      _id: -1,
+    });
+
+    const serialized = JSON.stringify(
+      service.listPipeline({ sort: 'order_number_desc' }),
+    );
+    expect(serialized).toContain('_effectiveOrderNumber');
+    expect(serialized).toContain('orderNumber');
+    expect(serialized).toContain('orderId');
+  });
+
   it('includes signed cancellation adjustments in Dashboard collections', async () => {
     const pipelines: PipelineStage[][] = [];
     const aggregate = jest.fn((pipeline: PipelineStage[]) => {

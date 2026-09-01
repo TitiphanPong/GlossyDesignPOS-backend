@@ -96,8 +96,8 @@ export class ListOrdersQueryDto {
   taxInvoice?: 'yes' | 'no';
 
   @IsOptional()
-  @IsIn(['newest', 'oldest', 'amount_desc', 'amount_asc'])
-  sort?: 'newest' | 'oldest' | 'amount_desc' | 'amount_asc';
+  @IsIn(['order_number_desc', 'newest', 'oldest', 'amount_desc', 'amount_asc'])
+  sort?: 'order_number_desc' | 'newest' | 'oldest' | 'amount_desc' | 'amount_asc';
 }
 
 export class ExportOrdersQueryDto extends ListOrdersQueryDto {
