@@ -31,7 +31,10 @@ export class QuickSaleV2Controller {
     @Body() dto: UpdateQuickSaleV2DraftDto,
     @Request() request: AuthRequest,
   ) {
-    const config = await this.quickSaleV2Service.updateDraft(dto.mappings);
+    const config = await this.quickSaleV2Service.updateDraft(
+      dto.mappings,
+      dto.defaults,
+    );
     await this.auditService.record(
       request.user ?? null,
       'quick-sale-v2.draft.update',

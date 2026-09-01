@@ -5,18 +5,28 @@ import {
   QuickProduct,
   QuickProductDocument,
 } from '../quick-products/quick-product.schema';
-import { QuickSaleV2DocumentMappingDto } from './quick-sale-v2.dto';
+import {
+  QuickSaleV2DocumentDefaultsDto,
+  QuickSaleV2DocumentMappingDto,
+} from './quick-sale-v2.dto';
 import {
   QuickSaleV2Config,
   QuickSaleV2ConfigDocument,
 } from './quick-sale-v2.schema';
 
 const CONFIG_KEY = 'default';
+const DEFAULT_DOCUMENT_DEFAULTS: QuickSaleV2DocumentDefaultsDto = {
+  workType: 'print',
+  size: 'A4',
+  colorMode: 'bw',
+  quantity: 1,
+};
 
 type MappingResponse = QuickSaleV2DocumentMappingDto;
 
 type ConfigResponse = {
   mappings: MappingResponse[];
+  defaults: QuickSaleV2DocumentDefaultsDto;
   version: number;
   updatedAt: string | null;
 };
@@ -37,6 +47,7 @@ export class QuickSaleV2Service {
       .exec();
     return this.toResponse(
       config?.publishedMappings ?? [],
+      config?.publishedDefaults ?? DEFAULT_DOCUMENT_DEFAULTS,
       config?.publishedVersion ?? 0,
       config?.updatedAt,
     );
@@ -49,6 +60,7 @@ export class QuickSaleV2Service {
       .exec();
     return this.toResponse(
       config?.draftMappings ?? [],
+      config?.draftDefaults ?? DEFAULT_DOCUMENT_DEFAULTS,
       config?.publishedVersion ?? 0,
       config?.updatedAt,
     );
@@ -56,6 +68,7 @@ export class QuickSaleV2Service {
 
   async updateDraft(
     mappings: QuickSaleV2DocumentMappingDto[],
+    defaults: QuickSaleV2DocumentDefaultsDto,
   ): Promise<ConfigResponse> {
     this.assertUniqueCombinations(mappings);
     await this.assertQuickProductsExist(mappings, false);
@@ -68,7 +81,10 @@ export class QuickSaleV2Service {
     const config = await this.configModel
       .findOneAndUpdate(
         { key: CONFIG_KEY },
-        { $set: { draftMappings }, $setOnInsert: { key: CONFIG_KEY } },
+        {
+          $set: { draftMappings, draftDefaults: defaults },
+          $setOnInsert: { key: CONFIG_KEY },
+        },
         { new: true, upsert: true, setDefaultsOnInsert: true },
       )
       .lean()
@@ -76,6 +92,7 @@ export class QuickSaleV2Service {
 
     return this.toResponse(
       config?.draftMappings ?? [],
+      config?.draftDefaults ?? defaults,
       config?.publishedVersion ?? 0,
       config?.updatedAt,
     );
@@ -87,6 +104,7 @@ export class QuickSaleV2Service {
       .lean()
       .exec();
     const draftMappings = config?.draftMappings ?? [];
+    const draftDefaults = config?.draftDefaults ?? DEFAULT_DOCUMENT_DEFAULTS;
     const dtoMappings = draftMappings.map((mapping) => ({
       workType: mapping.workType,
       size: mapping.size,
@@ -95,13 +113,17 @@ export class QuickSaleV2Service {
     }));
 
     this.assertUniqueCombinations(dtoMappings);
+    this.assertDefaultCombinationMapped(dtoMappings, draftDefaults);
     await this.assertQuickProductsExist(dtoMappings, true);
 
     const published = await this.configModel
       .findOneAndUpdate(
         { key: CONFIG_KEY },
         {
-          $set: { publishedMappings: draftMappings },
+          $set: {
+            publishedMappings: draftMappings,
+            publishedDefaults: draftDefaults,
+          },
           $inc: { publishedVersion: 1 },
           $setOnInsert: { key: CONFIG_KEY },
         },
@@ -112,6 +134,7 @@ export class QuickSaleV2Service {
 
     return this.toResponse(
       published?.publishedMappings ?? [],
+      published?.publishedDefaults ?? draftDefaults,
       published?.publishedVersion ?? 0,
       published?.updatedAt,
     );
@@ -126,6 +149,23 @@ export class QuickSaleV2Service {
     if (new Set(keys).size !== keys.length) {
       throw new BadRequestException(
         'Quick Sale V2 contains duplicate document option mappings',
+      );
+    }
+  }
+
+  private assertDefaultCombinationMapped(
+    mappings: QuickSaleV2DocumentMappingDto[],
+    defaults: QuickSaleV2DocumentDefaultsDto,
+  ): void {
+    const defaultKey = `${defaults.workType}:${defaults.size}:${defaults.colorMode}`;
+    const mapped = mappings.some(
+      (mapping) =>
+        `${mapping.workType}:${mapping.size}:${mapping.colorMode}` ===
+        defaultKey,
+    );
+    if (!mapped) {
+      throw new BadRequestException(
+        'Quick Sale V2 document defaults must reference a mapped option combination before publish',
       );
     }
   }
@@ -162,6 +202,12 @@ export class QuickSaleV2Service {
       colorMode: 'bw' | 'color';
       quickProductId: Types.ObjectId;
     }>,
+    defaults: {
+      workType: 'print' | 'copy' | 'scan';
+      size: 'A4' | 'A3';
+      colorMode: 'bw' | 'color';
+      quantity: number;
+    },
     version: number,
     updatedAt?: Date,
   ): ConfigResponse {
@@ -172,6 +218,12 @@ export class QuickSaleV2Service {
         colorMode: mapping.colorMode,
         quickProductId: mapping.quickProductId.toString(),
       })),
+      defaults: {
+        workType: defaults.workType,
+        size: defaults.size,
+        colorMode: defaults.colorMode,
+        quantity: defaults.quantity,
+      },
       version,
       updatedAt: updatedAt ? updatedAt.toISOString() : null,
     };
