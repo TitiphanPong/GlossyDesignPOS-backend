@@ -59,6 +59,9 @@ export class QuickSaleV2Config {
   publishedDefaults: QuickSaleV2DocumentDefaults;
 
   @Prop({ type: Number, default: 0 })
+  draftRevision: number;
+
+  @Prop({ type: Number, default: 0 })
   publishedVersion: number;
 
   createdAt?: Date;

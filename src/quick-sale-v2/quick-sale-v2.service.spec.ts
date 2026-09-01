@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import type { Model } from 'mongoose';
 import type { QuickProductDocument } from '../quick-products/quick-product.schema';
 import type { QuickSaleV2ConfigDocument } from './quick-sale-v2.schema';
@@ -24,9 +24,10 @@ function serviceWith({
 
   const execUpdate = jest.fn().mockResolvedValue(updatedValue);
   const leanUpdate = jest.fn().mockReturnValue({ exec: execUpdate });
+  const filters: unknown[] = [];
   const updates: unknown[] = [];
   const findOneAndUpdate = jest.fn((filter: unknown, update: unknown) => {
-    void filter;
+    filters.push(filter);
     updates.push(update);
     return { lean: leanUpdate };
   });
@@ -43,6 +44,7 @@ function serviceWith({
       { countDocuments } as unknown as Model<QuickProductDocument>,
     ),
     findOneAndUpdate,
+    filters,
     updates,
     countDocuments,
   };
@@ -125,7 +127,10 @@ describe('QuickSaleV2Service', () => {
     );
 
     expect(findOneAndUpdate).toHaveBeenCalledTimes(1);
-    expect(updates[0]).toMatchObject({ $set: { draftDefaults: defaults } });
+    expect(updates[0]).toMatchObject({
+      $set: { draftDefaults: defaults },
+      $inc: { draftRevision: 1 },
+    });
     expect(result.defaults).toEqual(defaults);
   });
 
@@ -150,6 +155,35 @@ describe('QuickSaleV2Service', () => {
     expect(countDocuments).not.toHaveBeenCalled();
   });
 
+  it('fails closed when the draft revision changes after publish validation', async () => {
+    const draft = [
+      {
+        workType: 'print' as const,
+        size: 'A4' as const,
+        colorMode: 'bw' as const,
+        quickProductId: productIdA,
+      },
+    ];
+    const { service, countDocuments, filters } = serviceWith({
+      count: 1,
+      findOneValue: {
+        key: 'default',
+        draftMappings: draft,
+        draftDefaults: defaults,
+        draftRevision: 7,
+        publishedVersion: 2,
+      },
+      updatedValue: null,
+    });
+
+    await expect(service.publish()).rejects.toBeInstanceOf(ConflictException);
+    expect(countDocuments).toHaveBeenCalledTimes(1);
+    expect(filters[0]).toEqual({
+      key: 'default',
+      $or: [{ draftRevision: 7 }],
+    });
+  });
+
   it('publishes mappings and defaults only after revalidating every mapped Quick Product', async () => {
     const draft = [
       {
@@ -163,6 +197,7 @@ describe('QuickSaleV2Service', () => {
       key: 'default',
       draftMappings: draft,
       draftDefaults: defaults,
+      draftRevision: 7,
       publishedMappings: draft,
       publishedDefaults: defaults,
       publishedVersion: 3,

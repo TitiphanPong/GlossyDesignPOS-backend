@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import {
@@ -83,6 +87,7 @@ export class QuickSaleV2Service {
         { key: CONFIG_KEY },
         {
           $set: { draftMappings, draftDefaults: defaults },
+          $inc: { draftRevision: 1 },
           $setOnInsert: { key: CONFIG_KEY },
         },
         { new: true, upsert: true, setDefaultsOnInsert: true },
@@ -105,6 +110,7 @@ export class QuickSaleV2Service {
       .exec();
     const draftMappings = config?.draftMappings ?? [];
     const draftDefaults = config?.draftDefaults ?? DEFAULT_DOCUMENT_DEFAULTS;
+    const draftRevision = config?.draftRevision ?? 0;
     const dtoMappings = draftMappings.map((mapping) => ({
       workType: mapping.workType,
       size: mapping.size,
@@ -118,22 +124,33 @@ export class QuickSaleV2Service {
 
     const published = await this.configModel
       .findOneAndUpdate(
-        { key: CONFIG_KEY },
+        {
+          key: CONFIG_KEY,
+          $or:
+            draftRevision === 0
+              ? [{ draftRevision: 0 }, { draftRevision: { $exists: false } }]
+              : [{ draftRevision }],
+        },
         {
           $set: {
             publishedMappings: draftMappings,
             publishedDefaults: draftDefaults,
           },
           $inc: { publishedVersion: 1 },
-          $setOnInsert: { key: CONFIG_KEY },
         },
-        { new: true, upsert: true, setDefaultsOnInsert: true },
+        { new: true },
       )
       .lean()
       .exec();
 
+    if (!published) {
+      throw new ConflictException(
+        'Quick Sale V2 draft changed during publish; reload and publish the latest draft',
+      );
+    }
+
     return this.toResponse(
-      published?.publishedMappings ?? [],
+      published.publishedMappings ?? [],
       published?.publishedDefaults ?? draftDefaults,
       published?.publishedVersion ?? 0,
       published?.updatedAt,
