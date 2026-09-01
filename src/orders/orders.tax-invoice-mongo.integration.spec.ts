@@ -189,6 +189,44 @@ describeMongo(
       expect(counter?.seq).toBe(1);
     });
 
+    it('continues the September book and invoice sequence into October', async () => {
+      await counterModel.create({
+        type: COUNTER_TYPE_TAX_INVOICE,
+        year: 202609,
+        seq: 99,
+      });
+      const septemberOrder = await createRegularOrder({
+        saleDate: new Date('2026-09-30T16:59:59.000Z'),
+      });
+      const octoberOrder = await createRegularOrder({
+        saleDate: new Date('2026-09-30T17:00:00.000Z'),
+      });
+
+      const septemberInvoice = await service.convertToTaxInvoice(
+        septemberOrder._id.toString(),
+      );
+      const octoberInvoice = await service.convertToTaxInvoice(
+        octoberOrder._id.toString(),
+      );
+      const counter = await counterModel
+        .findOne({ type: COUNTER_TYPE_TAX_INVOICE, year: 202609 })
+        .lean()
+        .exec();
+
+      expect(septemberInvoice.invoiceNumber).toBe('INV-202609-001-100');
+      expect(septemberInvoice.bookNo).toBe('001');
+      expect(septemberInvoice.invoiceSequence).toBe('100');
+      expect(octoberInvoice.invoiceNumber).toBe('INV-202610-002-001');
+      expect(octoberInvoice.bookNo).toBe('002');
+      expect(octoberInvoice.invoiceSequence).toBe('001');
+      expect(counter?.seq).toBe(101);
+      expect(
+        await counterModel.countDocuments({
+          type: COUNTER_TYPE_TAX_INVOICE,
+        }),
+      ).toBe(1);
+    });
+
     it('blocks partial legacy invoice identity instead of mixing two allocations', async () => {
       const order = await createRegularOrder({
         invoiceNumber: 'LEGACY-PARTIAL-001',

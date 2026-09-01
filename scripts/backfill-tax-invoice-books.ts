@@ -1,4 +1,10 @@
 import { Collection, MongoClient, ObjectId } from 'mongodb';
+import {
+  getTaxInvoiceBookSequence,
+  getTaxInvoiceCounterPeriod,
+  INVOICES_PER_BOOK,
+  TAX_INVOICE_CONTINUOUS_SEQUENCE_START_PERIOD,
+} from '../src/counters/tax-invoice-numbering';
 
 type LegacyTaxInvoice = {
   _id: ObjectId;
@@ -23,7 +29,6 @@ type LegacyDateCounter = {
   seq: number;
 };
 
-const INVOICES_PER_BOOK = 100;
 const TIME_ZONE = process.env.ORDER_NUMBER_TIMEZONE ?? 'Asia/Bangkok';
 
 function getInvoicePeriod(date: Date): string {
@@ -38,15 +43,6 @@ function getInvoicePeriod(date: Date): string {
     throw new Error('Could not determine tax invoice period.');
   }
   return `${year}${month}`;
-}
-
-function getSequenceFields(monthlySequence: number) {
-  const bookNo = Math.floor((monthlySequence - 1) / INVOICES_PER_BOOK) + 1;
-  const invoiceSequence = ((monthlySequence - 1) % INVOICES_PER_BOOK) + 1;
-  return {
-    bookNo: bookNo.toString().padStart(3, '0'),
-    invoiceSequence: invoiceSequence.toString().padStart(3, '0'),
-  };
 }
 
 async function normalizeLegacyDateCounters(
@@ -67,11 +63,15 @@ async function normalizeLegacyDateCounters(
     if (!/^\d{4}(\d{2})?$/.test(period)) {
       throw new TypeError(`Invalid legacy counter date ${counter.date}.`);
     }
+    const counterPeriod =
+      counter.type === 'TAX_INVOICE'
+        ? getTaxInvoiceCounterPeriod(period)
+        : Number(period);
     await counters.updateOne(
-      { type: counter.type, year: Number(period) },
+      { type: counter.type, year: counterPeriod },
       {
         $max: { seq: counter.seq },
-        $setOnInsert: { type: counter.type, year: Number(period) },
+        $setOnInsert: { type: counter.type, year: counterPeriod },
       },
       { upsert: true },
     );
@@ -111,16 +111,19 @@ async function main(): Promise<void> {
       })
       .sort({ saleDate: 1, createdAt: 1, _id: 1 })
       .toArray();
-    const sequencesByPeriod = new Map<string, number>();
+    const sequencesByCounterPeriod = new Map<number, number>();
     const updates = legacyOrders.map((order) => {
       const issuedAt = order.saleDate ?? order.createdAt;
       if (!issuedAt) {
         throw new Error(`Order ${order._id.toHexString()} has no issue date.`);
       }
       const invoicePeriod = getInvoicePeriod(issuedAt);
-      const monthlySequence = (sequencesByPeriod.get(invoicePeriod) ?? 0) + 1;
-      sequencesByPeriod.set(invoicePeriod, monthlySequence);
-      const { bookNo, invoiceSequence } = getSequenceFields(monthlySequence);
+      const counterPeriod = getTaxInvoiceCounterPeriod(invoicePeriod);
+      const totalSequence =
+        (sequencesByCounterPeriod.get(counterPeriod) ?? 0) + 1;
+      sequencesByCounterPeriod.set(counterPeriod, totalSequence);
+      const { bookNo, invoiceSequence } =
+        getTaxInvoiceBookSequence(totalSequence);
 
       return {
         updateOne: {
@@ -132,16 +135,19 @@ async function main(): Promise<void> {
       };
     });
 
-    for (const invoicePeriod of sequencesByPeriod.keys()) {
+    for (const counterPeriod of sequencesByCounterPeriod.keys()) {
       const structuredInvoices = await orders.countDocuments({
         taxInvoice: 'yes',
-        invoicePeriod,
+        invoicePeriod:
+          counterPeriod === Number(TAX_INVOICE_CONTINUOUS_SEQUENCE_START_PERIOD)
+            ? { $gte: TAX_INVOICE_CONTINUOUS_SEQUENCE_START_PERIOD }
+            : counterPeriod.toString(),
         bookNo: { $exists: true, $ne: null },
         invoiceSequence: { $exists: true, $ne: null },
       });
       if (structuredInvoices > 0) {
         throw new Error(
-          `Period ${invoicePeriod} contains both legacy and structured tax invoices. Backfill must run before issuing new-format invoices for that period.`,
+          `Counter period ${counterPeriod} contains both legacy and structured tax invoices. Backfill must run before issuing new-format invoices for that counter period.`,
         );
       }
     }
@@ -149,7 +155,7 @@ async function main(): Promise<void> {
     const summary = {
       mode: apply ? 'apply' : 'dry-run',
       legacyTaxInvoices: updates.length,
-      periods: Object.fromEntries(sequencesByPeriod),
+      counterPeriods: Object.fromEntries(sequencesByCounterPeriod),
     };
     process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
 
@@ -177,32 +183,34 @@ async function main(): Promise<void> {
         invoicePeriod: { $type: 'string' },
       })
       .toArray()) as StructuredTaxInvoice[];
-    const maximumSequencesByPeriod = new Map<string, number>();
+    const maximumSequencesByCounterPeriod = new Map<number, number>();
     for (const invoice of structuredInvoices) {
       const bookNo = Number(invoice.bookNo);
       const invoiceSequence = Number(invoice.invoiceSequence);
       if (!Number.isInteger(bookNo) || !Number.isInteger(invoiceSequence)) {
-        throw new TypeError(`Invalid book sequence on order ${invoice._id}.`);
+        throw new TypeError(
+          `Invalid book sequence on order ${invoice._id.toHexString()}.`,
+        );
       }
-      const monthlySequence =
-        (bookNo - 1) * INVOICES_PER_BOOK + invoiceSequence;
-      maximumSequencesByPeriod.set(
-        invoice.invoicePeriod,
+      const totalSequence = (bookNo - 1) * INVOICES_PER_BOOK + invoiceSequence;
+      const counterPeriod = getTaxInvoiceCounterPeriod(invoice.invoicePeriod);
+      maximumSequencesByCounterPeriod.set(
+        counterPeriod,
         Math.max(
-          maximumSequencesByPeriod.get(invoice.invoicePeriod) ?? 0,
-          monthlySequence,
+          maximumSequencesByCounterPeriod.get(counterPeriod) ?? 0,
+          totalSequence,
         ),
       );
     }
     await Promise.all(
-      [...maximumSequencesByPeriod].map(([invoicePeriod, seq]) =>
+      [...maximumSequencesByCounterPeriod].map(([counterPeriod, seq]) =>
         counters.updateOne(
-          { type: 'TAX_INVOICE', year: Number(invoicePeriod) },
+          { type: 'TAX_INVOICE', year: counterPeriod },
           {
             $max: { seq },
             $setOnInsert: {
               type: 'TAX_INVOICE',
-              year: Number(invoicePeriod),
+              year: counterPeriod,
             },
           },
           { upsert: true },

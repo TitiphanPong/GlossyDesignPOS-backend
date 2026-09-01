@@ -7,6 +7,10 @@ import {
   COUNTER_TYPE_ORDER,
   COUNTER_TYPE_TAX_INVOICE,
 } from './counters.schema';
+import {
+  getTaxInvoiceBookSequence,
+  getTaxInvoiceCounterPeriod,
+} from './tax-invoice-numbering';
 
 export type TaxInvoiceNumber = {
   invoiceNumber: string;
@@ -14,8 +18,6 @@ export type TaxInvoiceNumber = {
   invoiceSequence: string;
   invoicePeriod: string;
 };
-
-const INVOICES_PER_BOOK = 100;
 
 @Injectable()
 export class RunningNumberService {
@@ -52,7 +54,7 @@ export class RunningNumberService {
     session?: ClientSession,
   ): Promise<TaxInvoiceNumber> {
     const invoicePeriod = this.getInvoicePeriod(issuedAt);
-    const counterPeriod = Number(invoicePeriod);
+    const counterPeriod = getTaxInvoiceCounterPeriod(invoicePeriod);
     const counter = await this.counterModel.findOneAndUpdate(
       { type: COUNTER_TYPE_TAX_INVOICE, year: counterPeriod },
       {
@@ -70,10 +72,7 @@ export class RunningNumberService {
       );
     }
 
-    const bookNumber = Math.floor((counter.seq - 1) / INVOICES_PER_BOOK) + 1;
-    const invoiceNumber = ((counter.seq - 1) % INVOICES_PER_BOOK) + 1;
-    const bookNo = bookNumber.toString().padStart(3, '0');
-    const invoiceSequence = invoiceNumber.toString().padStart(3, '0');
+    const { bookNo, invoiceSequence } = getTaxInvoiceBookSequence(counter.seq);
 
     return {
       invoiceNumber: `INV-${invoicePeriod}-${bookNo}-${invoiceSequence}`,
