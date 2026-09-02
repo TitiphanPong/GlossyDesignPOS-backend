@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   Injectable,
   InternalServerErrorException,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
@@ -22,6 +23,7 @@ import {
   Customer,
   CustomerDocument,
 } from '../customers/schemas/customer.schema';
+import { NotificationsService } from '../notifications/notifications.service';
 import { OrderItemDto, type OrderDiscountDto } from '../orders/dto/order.dto';
 import {
   calculateOrderMoney,
@@ -32,6 +34,7 @@ import {
   OrderPricingService,
   ResolvedOrderLine,
 } from '../orders/order-pricing.service';
+import { OrdersSseService } from '../orders/orders.sse.service';
 import { Order, OrderDocument } from '../orders/orders.schema';
 import {
   ApproveQuotationDto,
@@ -99,6 +102,8 @@ type ConversionConflict = {
 
 @Injectable()
 export class QuotationsService {
+  private readonly logger = new Logger(QuotationsService.name);
+
   constructor(
     @InjectModel(Quotation.name)
     private readonly quotationModel: Model<QuotationDocument>,
@@ -108,6 +113,8 @@ export class QuotationsService {
     private readonly customerModel: Model<CustomerDocument>,
     private readonly orderPricing: OrderPricingService,
     private readonly runningNumber: RunningNumberService,
+    private readonly ordersSse: OrdersSseService,
+    private readonly notificationsService: NotificationsService,
     @InjectConnection() private readonly connection: Connection,
   ) {}
 
@@ -575,11 +582,38 @@ export class QuotationsService {
         'Quotation conversion transaction returned no result.',
       );
     }
+
+    if (!result.replayed) {
+      await this.publishConvertedOrderSideEffects(result.order);
+    }
+
     return {
       quotation: this.toResponse(result.quotation),
       order: this.toOrderReference(result.order),
       replayed: result.replayed,
     };
+  }
+
+  private async publishConvertedOrderSideEffects(
+    order: OrderDocument,
+  ): Promise<void> {
+    try {
+      this.ordersSse.emitOrder(this.toOrderReference(order));
+    } catch (error) {
+      this.logger.error(
+        'Failed to emit realtime event for converted quotation Order',
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
+
+    try {
+      await this.notificationsService.handleOrderPaymentState(order);
+    } catch (error) {
+      this.logger.error(
+        'Failed to evaluate action-center state for converted quotation Order',
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
   }
 
   private auditReason(action: string, reason?: string): string {

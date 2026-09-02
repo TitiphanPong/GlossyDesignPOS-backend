@@ -7,7 +7,9 @@ import { Types } from 'mongoose';
 import type { AuthenticatedUser } from '../auth/auth.types';
 import type { RunningNumberService } from '../counters/running-number.service';
 import type { CustomerDocument } from '../customers/schemas/customer.schema';
+import type { NotificationsService } from '../notifications/notifications.service';
 import type { OrderPricingService } from '../orders/order-pricing.service';
+import type { OrdersSseService } from '../orders/orders.sse.service';
 import type { OrderDocument } from '../orders/orders.schema';
 import type { QuotationDocument, QuotationItem } from './quotation.schema';
 import { QuotationsService } from './quotations.service';
@@ -159,6 +161,12 @@ function createService(
       work({ transaction: true }),
     ),
   };
+  const ordersSse = {
+    emitOrder: jest.fn(),
+  };
+  const notificationsService = {
+    handleOrderPaymentState: jest.fn(async () => undefined),
+  };
 
   const service = new QuotationsService(
     quotationModel as never,
@@ -166,6 +174,8 @@ function createService(
     customerModel as never,
     orderPricing as unknown as OrderPricingService,
     runningNumber as unknown as RunningNumberService,
+    ordersSse as unknown as OrdersSseService,
+    notificationsService as unknown as NotificationsService,
     connection as never,
   );
 
@@ -176,6 +186,9 @@ function createService(
     orderModel,
     orderPricing,
     runningNumber,
+    ordersSse,
+    notificationsService,
+    connection,
     getCreatedOrderPayload: () => createdOrderPayload,
   };
 }
@@ -435,7 +448,13 @@ describe('QuotationsService', () => {
       convertedBy: manager.id,
       __v: 1,
     });
-    const { service, runningNumber, getCreatedOrderPayload } = createService({
+    const {
+      service,
+      runningNumber,
+      ordersSse,
+      notificationsService,
+      getCreatedOrderPayload,
+    } = createService({
       existingQuotation: doc,
       updatedQuotation: updated,
     });
@@ -468,5 +487,37 @@ describe('QuotationsService', () => {
     expect(runningNumber.generateTaxInvoiceNumber).not.toHaveBeenCalled();
     expect(result.order.orderNumber).toBe('GD-2026-000001');
     expect(result.replayed).toBe(false);
+    expect(ordersSse.emitOrder).toHaveBeenCalledTimes(1);
+    expect(notificationsService.handleOrderPaymentState).toHaveBeenCalledTimes(
+      1,
+    );
+  });
+
+  it('does not repeat Order-created side effects when conversion replays an existing Order', async () => {
+    const existingOrder = {
+      _id: new Types.ObjectId(),
+      orderNumber: 'GD-2026-000777',
+      remainingTotal: 100,
+      toObject: () => ({}),
+    } as unknown as OrderDocument;
+    const doc = makeQuotationDoc({
+      status: 'CONVERTED',
+      convertedOrderId: existingOrder._id,
+    });
+    const { service, ordersSse, notificationsService } = createService({
+      existingQuotation: doc,
+      existingOrder,
+    });
+
+    const result = await service.convertToOrder(
+      doc._id.toString(),
+      { version: 0 },
+      manager,
+      'replay-existing-order',
+    );
+
+    expect(result.replayed).toBe(true);
+    expect(ordersSse.emitOrder).not.toHaveBeenCalled();
+    expect(notificationsService.handleOrderPaymentState).not.toHaveBeenCalled();
   });
 });

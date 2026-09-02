@@ -35,6 +35,10 @@ describeMongo('QuotationsService Mongo transaction integration', () => {
   let quotationModel: Model<QuotationDocument>;
   let orderModel: Model<OrderDocument>;
   let counterModel: Model<CounterDocument>;
+  const ordersSse = { emitOrder: jest.fn() };
+  const notificationsService = {
+    handleOrderPaymentState: jest.fn(() => Promise.resolve()),
+  };
 
   beforeAll(async () => {
     replSet = await MongoMemoryReplSet.create({
@@ -69,6 +73,8 @@ describeMongo('QuotationsService Mongo transaction integration', () => {
   });
 
   beforeEach(async () => {
+    ordersSse.emitOrder.mockClear();
+    notificationsService.handleOrderPaymentState.mockClear();
     await Promise.all([
       quotationModel.deleteMany({}),
       orderModel.deleteMany({}),
@@ -83,6 +89,8 @@ describeMongo('QuotationsService Mongo transaction integration', () => {
       {} as Model<CustomerDocument>,
       {} as OrderPricingService,
       runningNumber,
+      ordersSse as never,
+      notificationsService as never,
       connection,
     );
   }
@@ -235,6 +243,10 @@ describeMongo('QuotationsService Mongo transaction integration', () => {
     expect(replay.order._id).toBe(storedOrder?._id.toString());
     expect(replay.replayed).toBe(true);
     expect(await orderModel.countDocuments()).toBe(1);
+    expect(ordersSse.emitOrder).toHaveBeenCalledTimes(1);
+    expect(notificationsService.handleOrderPaymentState).toHaveBeenCalledTimes(
+      1,
+    );
   });
 
   it('rolls back quotation conversion when Order creation fails', async () => {
@@ -285,5 +297,7 @@ describeMongo('QuotationsService Mongo transaction integration', () => {
     expect(storedQuotation?.status).toBe('APPROVED');
     expect(storedQuotation?.convertedOrderId).toBeUndefined();
     expect(await orderModel.countDocuments()).toBe(1);
+    expect(ordersSse.emitOrder).not.toHaveBeenCalled();
+    expect(notificationsService.handleOrderPaymentState).not.toHaveBeenCalled();
   });
 });

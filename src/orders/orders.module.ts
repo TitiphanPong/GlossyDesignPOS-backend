@@ -43,6 +43,11 @@ import {
     OrderPricingService,
     OrderReportingService,
   ],
-  exports: [OrderReportingService, OrdersService, MongooseModule],
+  exports: [
+    OrderReportingService,
+    OrdersService,
+    OrdersSseService,
+    MongooseModule,
+  ],
 })
 export class OrdersModule {}

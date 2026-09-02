@@ -4,7 +4,9 @@ import { AuthModule } from '../auth/auth.module';
 import { Counter, CounterSchema } from '../counters/counters.schema';
 import { RunningNumberService } from '../counters/running-number.service';
 import { Customer, CustomerSchema } from '../customers/schemas/customer.schema';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { OrderPricingService } from '../orders/order-pricing.service';
+import { OrdersModule } from '../orders/orders.module';
 import { Order, OrderSchema } from '../orders/orders.schema';
 import { Product, ProductSchema } from '../products/product.schema';
 import {
@@ -18,6 +20,8 @@ import { QuotationsService } from './quotations.service';
 @Module({
   imports: [
     AuthModule,
+    NotificationsModule,
+    OrdersModule,
     MongooseModule.forFeature([
       { name: Quotation.name, schema: QuotationSchema },
       { name: Order.name, schema: OrderSchema },
