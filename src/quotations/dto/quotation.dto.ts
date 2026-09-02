@@ -1,5 +1,6 @@
 import { Transform, Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
   IsArray,
   IsBoolean,
   IsDateString,
@@ -93,6 +94,7 @@ export class QuotationItemRequestDto {
   @IsOptional() @IsString() inkjetType?: string;
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(250)
   @ValidateNested({ each: true })
   @Type(() => QuotationSizeFlexDto)
   sizeFlex?: QuotationSizeFlexDto[];
@@ -110,6 +112,7 @@ export class CreateQuotationDto {
 
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(250)
   @ValidateNested({ each: true })
   @Type(() => QuotationItemRequestDto)
   items?: QuotationItemRequestDto[];

@@ -12,6 +12,11 @@ import type { CustomerDocument } from '../customers/schemas/customer.schema';
 import type { OrderPricingService } from '../orders/order-pricing.service';
 import { Order, OrderDocument, OrderSchema } from '../orders/orders.schema';
 import {
+  QuotationRevisionRecord,
+  QuotationRevisionRecordDocument,
+  QuotationRevisionRecordSchema,
+} from './quotation-revision.schema';
+import {
   Quotation,
   QuotationDocument,
   QuotationSchema,
@@ -33,6 +38,7 @@ describeMongo('QuotationsService Mongo transaction integration', () => {
   let replSet: MongoMemoryReplSet;
   let connection: Connection;
   let quotationModel: Model<QuotationDocument>;
+  let quotationRevisionModel: Model<QuotationRevisionRecordDocument>;
   let orderModel: Model<OrderDocument>;
   let counterModel: Model<CounterDocument>;
   const ordersSse = { emitOrder: jest.fn() };
@@ -52,6 +58,10 @@ describeMongo('QuotationsService Mongo transaction integration', () => {
       Quotation.name,
       QuotationSchema,
     ) as unknown as Model<QuotationDocument>;
+    quotationRevisionModel = connection.model(
+      QuotationRevisionRecord.name,
+      QuotationRevisionRecordSchema,
+    ) as unknown as Model<QuotationRevisionRecordDocument>;
     orderModel = connection.model(
       Order.name,
       OrderSchema,
@@ -62,6 +72,7 @@ describeMongo('QuotationsService Mongo transaction integration', () => {
     ) as unknown as Model<CounterDocument>;
     await Promise.all([
       quotationModel.syncIndexes(),
+      quotationRevisionModel.syncIndexes(),
       orderModel.syncIndexes(),
       counterModel.syncIndexes(),
     ]);
@@ -77,6 +88,7 @@ describeMongo('QuotationsService Mongo transaction integration', () => {
     notificationsService.handleOrderPaymentState.mockClear();
     await Promise.all([
       quotationModel.deleteMany({}),
+      quotationRevisionModel.deleteMany({}),
       orderModel.deleteMany({}),
       counterModel.deleteMany({}),
     ]);
@@ -85,6 +97,7 @@ describeMongo('QuotationsService Mongo transaction integration', () => {
   function service(runningNumber = new RunningNumberService(counterModel)) {
     return new QuotationsService(
       quotationModel,
+      quotationRevisionModel,
       orderModel,
       {} as Model<CustomerDocument>,
       {} as OrderPricingService,
@@ -184,6 +197,78 @@ describeMongo('QuotationsService Mongo transaction integration', () => {
       reason: 'Manager-approved quotation price',
       approvedBy: actor.id,
     });
+
+    const storedParent = await quotationModel.findById(quotation._id).lean();
+    expect(storedParent?.revisionHistory).toEqual([]);
+    expect(
+      await quotationRevisionModel.countDocuments({
+        quotationId: quotation._id,
+      }),
+    ).toBe(1);
+  });
+
+  it('merges legacy embedded and external revision history in deterministic order', async () => {
+    const quotation = await createApprovedQuotation();
+    await quotationModel.updateOne(
+      { _id: quotation._id },
+      {
+        $set: {
+          revision: 2,
+          revisionHistory: [
+            {
+              revision: 0,
+              status: 'SENT',
+              quotationNumber: 'QT-202609-0001',
+              customerSnapshot: { customerName: 'Legacy Customer' },
+              items: [],
+              subtotal: 10,
+              discount: 0,
+              taxableAmount: 10,
+              vatRate: 7,
+              vatAmount: 0,
+              grandTotal: 10,
+              taxInvoiceRequested: false,
+              currency: 'THB',
+              snapshotBy: actor.id,
+              snapshotAt: new Date('2026-09-01T01:00:00.000Z'),
+            },
+          ],
+        },
+      },
+    );
+    await quotationRevisionModel.create({
+      quotationId: quotation._id,
+      revision: 1,
+      snapshot: {
+        revision: 1,
+        status: 'APPROVED',
+        quotationNumber: 'QT-202609-0001',
+        customerSnapshot: { customerName: 'External Customer' },
+        items: [],
+        subtotal: 20,
+        discount: 0,
+        taxableAmount: 20,
+        vatRate: 7,
+        vatAmount: 0,
+        grandTotal: 20,
+        taxInvoiceRequested: false,
+        currency: 'THB',
+        snapshotBy: actor.id,
+        snapshotAt: new Date('2026-09-01T02:00:00.000Z'),
+      },
+    });
+
+    const found = await service().findById(quotation._id.toString());
+
+    expect(found.revisionHistory.map((snapshot) => snapshot.revision)).toEqual([
+      0, 1,
+    ]);
+    expect(found.revisionHistory[0].customerSnapshot.customerName).toBe(
+      'Legacy Customer',
+    );
+    expect(found.revisionHistory[1].customerSnapshot.customerName).toBe(
+      'External Customer',
+    );
   });
 
   it('deduplicates concurrent conversion and returns the same Order on retry', async () => {

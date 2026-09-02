@@ -49,6 +49,10 @@ import {
 } from './dto/quotation.dto';
 import { ListQuotationsQueryDto } from './dto/list-quotations-query.dto';
 import {
+  QuotationRevisionRecord,
+  QuotationRevisionRecordDocument,
+} from './quotation-revision.schema';
+import {
   Quotation,
   QuotationDocument,
   QuotationItem,
@@ -107,6 +111,8 @@ export class QuotationsService {
   constructor(
     @InjectModel(Quotation.name)
     private readonly quotationModel: Model<QuotationDocument>,
+    @InjectModel(QuotationRevisionRecord.name)
+    private readonly quotationRevisionModel: Model<QuotationRevisionRecordDocument>,
     @InjectModel(Order.name)
     private readonly orderModel: Model<OrderDocument>,
     @InjectModel(Customer.name)
@@ -194,7 +200,7 @@ export class QuotationsService {
 
   async findById(id: string): Promise<QuotationResponse> {
     const doc = await this.findDocument(id);
-    return this.toResponse(doc);
+    return this.toResponseWithRevisionHistory(doc);
   }
 
   async update(
@@ -340,36 +346,52 @@ export class QuotationsService {
     dto: VersionedQuotationCommandDto,
     actor: AuthenticatedUser,
   ): Promise<QuotationResponse> {
-    const doc = await this.findDocument(id);
-    this.assertVersion(doc, dto.version);
-    const effective = getEffectiveQuotationStatus(doc.status, doc.validUntil);
-    if (!['SENT', 'APPROVED', 'REJECTED', 'EXPIRED'].includes(effective)) {
-      throw new BadRequestException(
-        `Quotation in ${effective} cannot be revised.`,
+    const revised = await this.connection.transaction(async (session) => {
+      const doc = await this.findDocument(id, session);
+      this.assertVersion(doc, dto.version);
+      const effective = getEffectiveQuotationStatus(doc.status, doc.validUntil);
+      if (!['SENT', 'APPROVED', 'REJECTED', 'EXPIRED'].includes(effective)) {
+        throw new BadRequestException(
+          `Quotation in ${effective} cannot be revised.`,
+        );
+      }
+      assertQuotationTransition(effective, 'DRAFT');
+      const now = new Date();
+      const snapshot = this.snapshotRevision(doc, effective, actor.id, now);
+      await this.quotationRevisionModel.create(
+        [
+          {
+            quotationId: doc._id,
+            revision: snapshot.revision,
+            snapshot,
+          },
+        ],
+        { session },
+      );
+      doc.revision += 1;
+      doc.status = 'DRAFT';
+      doc.issuedAt = undefined;
+      doc.rejectionReason = undefined;
+      doc.updatedBy = actor.id;
+      doc.statusHistory.push({
+        status: 'DRAFT',
+        action: 'REVISE',
+        actor: actor.id,
+        timestamp: now,
+        reason: this.auditReason('REVISE', dto.reason),
+      });
+      try {
+        return await doc.save({ session });
+      } catch (error) {
+        this.rethrowConcurrency(error);
+      }
+    });
+    if (!revised) {
+      throw new InternalServerErrorException(
+        'Quotation revise transaction returned no result.',
       );
     }
-    assertQuotationTransition(effective, 'DRAFT');
-    const now = new Date();
-    doc.revisionHistory.push(
-      this.snapshotRevision(doc, effective, actor.id, now),
-    );
-    doc.revision += 1;
-    doc.status = 'DRAFT';
-    doc.issuedAt = undefined;
-    doc.rejectionReason = undefined;
-    doc.updatedBy = actor.id;
-    doc.statusHistory.push({
-      status: 'DRAFT',
-      action: 'REVISE',
-      actor: actor.id,
-      timestamp: now,
-      reason: this.auditReason('REVISE', dto.reason),
-    });
-    try {
-      return this.toResponse(await doc.save());
-    } catch (error) {
-      this.rethrowConcurrency(error);
-    }
+    return this.toResponseWithRevisionHistory(revised);
   }
 
   async cancel(
@@ -1334,6 +1356,29 @@ export class QuotationsService {
       expiring,
       expiringOrExpired: expiring + expired,
     };
+  }
+
+  private async toResponseWithRevisionHistory(
+    doc: QuotationDocument,
+    now: Date = new Date(),
+  ): Promise<QuotationResponse> {
+    const response = this.toResponse(doc, now);
+    const external = await this.quotationRevisionModel
+      .find({ quotationId: doc._id })
+      .sort({ revision: 1 })
+      .lean()
+      .exec();
+    const byRevision = new Map<number, QuotationRevisionSnapshot>();
+    for (const snapshot of response.revisionHistory ?? []) {
+      byRevision.set(snapshot.revision, snapshot);
+    }
+    for (const record of external) {
+      byRevision.set(record.revision, record.snapshot);
+    }
+    response.revisionHistory = [...byRevision.values()].sort(
+      (left, right) => left.revision - right.revision,
+    );
+    return response;
   }
 
   private toResponse(

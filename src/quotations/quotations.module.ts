@@ -13,6 +13,10 @@ import {
   QuickProduct,
   QuickProductSchema,
 } from '../quick-products/quick-product.schema';
+import {
+  QuotationRevisionRecord,
+  QuotationRevisionRecordSchema,
+} from './quotation-revision.schema';
 import { Quotation, QuotationSchema } from './quotation.schema';
 import { QuotationsController } from './quotations.controller';
 import { QuotationsService } from './quotations.service';
@@ -24,6 +28,10 @@ import { QuotationsService } from './quotations.service';
     OrdersModule,
     MongooseModule.forFeature([
       { name: Quotation.name, schema: QuotationSchema },
+      {
+        name: QuotationRevisionRecord.name,
+        schema: QuotationRevisionRecordSchema,
+      },
       { name: Order.name, schema: OrderSchema },
       { name: Customer.name, schema: CustomerSchema },
       { name: Counter.name, schema: CounterSchema },

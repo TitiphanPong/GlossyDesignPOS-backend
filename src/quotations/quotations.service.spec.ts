@@ -125,6 +125,37 @@ function createService(
     },
   );
 
+  const revisionRecords: Array<{
+    quotationId: Types.ObjectId;
+    revision: number;
+    snapshot: Record<string, unknown>;
+  }> = [];
+  const quotationRevisionModel = {
+    create: jest.fn(
+      async (
+        records: Array<{
+          quotationId: Types.ObjectId;
+          revision: number;
+          snapshot: Record<string, unknown>;
+        }>,
+      ) => {
+        revisionRecords.push(...records);
+        return records;
+      },
+    ),
+    find: jest.fn((filter: { quotationId: Types.ObjectId }) => ({
+      sort: () => ({
+        lean: () => ({
+          exec: async () =>
+            revisionRecords.filter(
+              (record) =>
+                record.quotationId.toString() === filter.quotationId.toString(),
+            ),
+        }),
+      }),
+    })),
+  };
+
   const customerModel = {
     findOne: jest.fn(() => queryReturning(null as CustomerDocument | null)),
   };
@@ -170,6 +201,7 @@ function createService(
 
   const service = new QuotationsService(
     quotationModel as never,
+    quotationRevisionModel as never,
     orderModel as never,
     customerModel as never,
     orderPricing as unknown as OrderPricingService,
@@ -183,6 +215,7 @@ function createService(
     service,
     createdQuotations,
     quotationModel,
+    quotationRevisionModel,
     orderModel,
     orderPricing,
     runningNumber,
