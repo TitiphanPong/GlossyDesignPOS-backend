@@ -442,6 +442,7 @@ export class OrdersService {
             { _id: id },
             {
               $set: {
+                taxInvoiceRequested: true,
                 taxInvoice: 'yes',
                 invoiceNumber,
                 bookNo,
@@ -1667,6 +1668,7 @@ export class OrdersService {
       entryMode,
       isBackdated: entryMode === 'backdated',
       backdatedReason: backdatedSale?.backdatedReason,
+      taxInvoiceRequested: taxInvoice === 'yes',
       taxInvoice,
       vatAmount: money.vatAmount,
       receivedAmount: money.receivedAmount,
@@ -1735,6 +1737,9 @@ export class OrdersService {
         ),
       backdatedReason: plain.backdatedReason,
       orderNumber: plain.orderNumber,
+      quotationId: plain.quotationId?.toString(),
+      quotationNumber: plain.quotationNumber,
+      quotationRevision: plain.quotationRevision,
       invoiceNumber: plain.invoiceNumber,
       bookNo: plain.bookNo,
       invoiceSequence: plain.invoiceSequence,
@@ -1769,6 +1774,8 @@ export class OrdersService {
       paymentMethod: plain.paymentMethod ?? plain.payment,
       status: plain.status,
       workflowStatus: this.resolveWorkflowStatus(plain),
+      taxInvoiceRequested:
+        plain.taxInvoiceRequested ?? plain.taxInvoice === 'yes',
       taxInvoice: plain.taxInvoice,
       vatAmount: plain.vatAmount,
       grandTotal: plain.grandTotal,

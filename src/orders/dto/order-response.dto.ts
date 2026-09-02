@@ -66,6 +66,9 @@ export class OrderResponseDto {
   isBackdated!: boolean;
   backdatedReason?: string;
   orderNumber?: string;
+  quotationId?: string;
+  quotationNumber?: string;
+  quotationRevision?: number;
   invoiceNumber?: string;
   bookNo?: string;
   invoiceSequence?: string;
@@ -100,6 +103,7 @@ export class OrderResponseDto {
   paymentMethod!: PaymentMethod;
   status!: OrderStatus;
   workflowStatus!: OrderWorkflowStatus;
+  taxInvoiceRequested!: boolean;
   taxInvoice!: 'yes' | 'no';
   vatAmount!: number;
   grandTotal!: number;

@@ -60,6 +60,15 @@ export class Order {
   @Prop({ unique: true, sparse: true })
   orderNumber?: string;
 
+  @Prop({ type: Types.ObjectId, ref: 'Quotation', index: true })
+  quotationId?: Types.ObjectId;
+
+  @Prop({ maxlength: 32, index: true })
+  quotationNumber?: string;
+
+  @Prop({ min: 0 })
+  quotationRevision?: number;
+
   @Prop({ select: false, maxlength: 64 })
   trackingAccessToken?: string;
 
@@ -180,6 +189,9 @@ export class Order {
 
   @Prop({ type: String, enum: ORDER_WORKFLOW_STATUSES, index: true })
   workflowStatus?: OrderWorkflowStatus;
+
+  @Prop({ type: Boolean, default: false })
+  taxInvoiceRequested!: boolean;
 
   @Prop({ type: String, enum: ['yes', 'no'], default: 'no' })
   taxInvoice!: 'yes' | 'no';

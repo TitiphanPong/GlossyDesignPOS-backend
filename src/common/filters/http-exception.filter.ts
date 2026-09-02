@@ -39,7 +39,15 @@ export class HttpExceptionFilter implements ExceptionFilter {
         return;
       }
 
-      response.status(status).json({ message });
+      if (typeof exceptionResponse === 'string') {
+        response.status(status).json({ message });
+        return;
+      }
+
+      response.status(status).json({
+        ...(exceptionResponse as Record<string, unknown>),
+        message,
+      });
       return;
     }
 

@@ -60,6 +60,42 @@ describe('RunningNumberService', () => {
     });
   });
 
+  it('allocates quotation numbers per Bangkok month with four digits', async () => {
+    const august = await service.generateQuotationNumber(
+      new Date('2026-08-31T16:59:59.000Z'),
+    );
+    const septemberFirst = await service.generateQuotationNumber(
+      new Date('2026-08-31T17:00:00.000Z'),
+    );
+    const septemberSecond = await service.generateQuotationNumber(
+      new Date('2026-09-15T03:00:00.000Z'),
+    );
+    const october = await service.generateQuotationNumber(
+      new Date('2026-09-30T17:00:00.000Z'),
+    );
+
+    expect(august).toEqual({
+      quotationNumber: 'QT-202608-0001',
+      quotationPeriod: '202608',
+      quotationSequence: '0001',
+    });
+    expect(septemberFirst).toEqual({
+      quotationNumber: 'QT-202609-0001',
+      quotationPeriod: '202609',
+      quotationSequence: '0001',
+    });
+    expect(septemberSecond).toEqual({
+      quotationNumber: 'QT-202609-0002',
+      quotationPeriod: '202609',
+      quotationSequence: '0002',
+    });
+    expect(october).toEqual({
+      quotationNumber: 'QT-202610-0001',
+      quotationPeriod: '202610',
+      quotationSequence: '0001',
+    });
+  });
+
   it('starts a new book after 100 invoices even when the sequence crosses a month', async () => {
     const september = new Date('2026-09-01T00:00:00.000Z');
     const october = new Date('2026-10-01T00:00:00.000Z');

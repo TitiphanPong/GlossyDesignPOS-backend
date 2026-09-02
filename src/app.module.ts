@@ -20,6 +20,7 @@ import { CustomersModule } from './customers/customers.module';
 import { CustomerDisplayModule } from './customer-display/customer-display.module';
 import { LineModule } from './line/line.module';
 import { QuickSaleV2Module } from './quick-sale-v2/quick-sale-v2.module';
+import { QuotationsModule } from './quotations/quotations.module';
 
 @Module({
   imports: [
@@ -48,6 +49,7 @@ import { QuickSaleV2Module } from './quick-sale-v2/quick-sale-v2.module';
     CustomerDisplayModule,
     LineModule,
     QuickSaleV2Module,
+    QuotationsModule,
   ],
   controllers: [HealthController],
   providers: [

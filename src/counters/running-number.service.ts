@@ -5,6 +5,7 @@ import {
   Counter,
   CounterDocument,
   COUNTER_TYPE_ORDER,
+  COUNTER_TYPE_QUOTATION,
   COUNTER_TYPE_TAX_INVOICE,
 } from './counters.schema';
 import {
@@ -19,6 +20,12 @@ export type TaxInvoiceNumber = {
   invoicePeriod: string;
 };
 
+export type QuotationNumber = {
+  quotationNumber: string;
+  quotationPeriod: string;
+  quotationSequence: string;
+};
+
 @Injectable()
 export class RunningNumberService {
   constructor(
@@ -26,7 +33,10 @@ export class RunningNumberService {
     private readonly counterModel: Model<CounterDocument>,
   ) {}
 
-  async generateOrderNumber(now: Date = new Date()): Promise<string> {
+  async generateOrderNumber(
+    now: Date = new Date(),
+    session?: ClientSession,
+  ): Promise<string> {
     const year = this.getYear(now);
     const counter = await this.counterModel.findOneAndUpdate(
       { type: COUNTER_TYPE_ORDER, year },
@@ -37,6 +47,7 @@ export class RunningNumberService {
       {
         new: true,
         upsert: true,
+        ...(session ? { session } : {}),
       },
     );
 
@@ -49,11 +60,47 @@ export class RunningNumberService {
     return `GD-${year}-${counter.seq.toString().padStart(6, '0')}`;
   }
 
+  async generateQuotationNumber(
+    issuedAt: Date = new Date(),
+    session?: ClientSession,
+  ): Promise<QuotationNumber> {
+    const quotationPeriod = this.getBangkokPeriod(issuedAt);
+    const counterPeriod = Number(quotationPeriod);
+    const counter = await this.counterModel.findOneAndUpdate(
+      { type: COUNTER_TYPE_QUOTATION, year: counterPeriod },
+      {
+        $inc: { seq: 1 },
+        $setOnInsert: {
+          type: COUNTER_TYPE_QUOTATION,
+          year: counterPeriod,
+        },
+      },
+      { new: true, upsert: true, ...(session ? { session } : {}) },
+    );
+    if (!counter) {
+      throw new InternalServerErrorException(
+        'Failed to generate quotation number.',
+      );
+    }
+    if (counter.seq > 9999) {
+      throw new InternalServerErrorException(
+        `Quotation sequence exhausted for period ${quotationPeriod}.`,
+      );
+    }
+
+    const quotationSequence = counter.seq.toString().padStart(4, '0');
+    return {
+      quotationNumber: `QT-${quotationPeriod}-${quotationSequence}`,
+      quotationPeriod,
+      quotationSequence,
+    };
+  }
+
   async generateTaxInvoiceNumber(
     issuedAt: Date = new Date(),
     session?: ClientSession,
   ): Promise<TaxInvoiceNumber> {
-    const invoicePeriod = this.getInvoicePeriod(issuedAt);
+    const invoicePeriod = this.getBangkokPeriod(issuedAt);
     const counterPeriod = getTaxInvoiceCounterPeriod(invoicePeriod);
     const counter = await this.counterModel.findOneAndUpdate(
       { type: COUNTER_TYPE_TAX_INVOICE, year: counterPeriod },
@@ -100,7 +147,7 @@ export class RunningNumberService {
     return Number(year);
   }
 
-  private getInvoicePeriod(date: Date): string {
+  private getBangkokPeriod(date: Date): string {
     const formatter = new Intl.DateTimeFormat('en-US', {
       timeZone: process.env.ORDER_NUMBER_TIMEZONE ?? 'Asia/Bangkok',
       year: 'numeric',
@@ -112,7 +159,7 @@ export class RunningNumberService {
 
     if (!year || !month) {
       throw new InternalServerErrorException(
-        'Failed to format tax invoice period.',
+        'Failed to format document number period.',
       );
     }
 
