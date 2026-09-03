@@ -33,6 +33,7 @@ function makeService(
   const notificationsService = {
     autoResolvePaymentNotifications: jest.fn().mockResolvedValue(undefined),
     handleOrderPaymentState: jest.fn().mockResolvedValue(undefined),
+    handleOrderStatusChange: jest.fn().mockResolvedValue(undefined),
   } as unknown as NotificationsService;
 
   return new OrdersService(
@@ -149,6 +150,106 @@ describeMongo(
       expect(stored?.grandTotal).toBe(107);
       expect(stored?.remainingTotal).toBe(107);
       expect(stored?.status).toBe('awaiting_payment');
+    });
+
+    it('keeps the issued invoice identity when customer tax details are edited', async () => {
+      const order = await createRegularOrder();
+      const issued = await service.convertToTaxInvoice(order._id.toString());
+
+      expect(issued.invoiceNumber).toBe('INV-202608-001-001');
+
+      const edited = await service.updateOrder(order._id.toString(), {
+        customerName: 'Updated tax customer',
+        taxId: '0105559999999',
+        customerTaxId: '0105559999999',
+        address: '99 Updated Road Bangkok',
+        customerAddress: '99 Updated Road Bangkok',
+      });
+      const reissued = await service.convertToTaxInvoice(order._id.toString());
+      const counterAfterEdit = await counterModel
+        .findOne({ type: COUNTER_TYPE_TAX_INVOICE, year: 202608 })
+        .lean()
+        .exec();
+
+      expect(edited.invoiceNumber).toBe(issued.invoiceNumber);
+      expect(edited.bookNo).toBe(issued.bookNo);
+      expect(edited.invoiceSequence).toBe(issued.invoiceSequence);
+      expect(edited.invoicePeriod).toBe(issued.invoicePeriod);
+      expect(edited.customerName).toBe('Updated tax customer');
+      expect(reissued.invoiceNumber).toBe(issued.invoiceNumber);
+      expect(reissued.bookNo).toBe(issued.bookNo);
+      expect(reissued.invoiceSequence).toBe(issued.invoiceSequence);
+      expect(reissued.invoicePeriod).toBe(issued.invoicePeriod);
+      expect(counterAfterEdit?.seq).toBe(1);
+
+      const nextOrder = await createRegularOrder();
+      const nextInvoice = await service.convertToTaxInvoice(
+        nextOrder._id.toString(),
+      );
+
+      expect(nextInvoice.invoiceNumber).toBe('INV-202608-001-002');
+    });
+
+    it('preserves a cancelled invoice identity and allocates the next number to a new order', async () => {
+      const order = await createRegularOrder();
+      const issued = await service.convertToTaxInvoice(order._id.toString());
+
+      const cancelled = await service.cancelOrder(
+        order._id.toString(),
+        'Customer cancelled after invoice issuance',
+        { id: 'owner-1' },
+      );
+      const reopened = await service.convertToTaxInvoice(order._id.toString());
+      const counterAfterCancel = await counterModel
+        .findOne({ type: COUNTER_TYPE_TAX_INVOICE, year: 202608 })
+        .lean()
+        .exec();
+
+      expect(cancelled.status).toBe('cancelled');
+      expect(cancelled.invoiceNumber).toBe(issued.invoiceNumber);
+      expect(cancelled.bookNo).toBe(issued.bookNo);
+      expect(cancelled.invoiceSequence).toBe(issued.invoiceSequence);
+      expect(reopened.status).toBe('cancelled');
+      expect(reopened.invoiceNumber).toBe(issued.invoiceNumber);
+      expect(counterAfterCancel?.seq).toBe(1);
+
+      const nextOrder = await createRegularOrder();
+      const nextInvoice = await service.convertToTaxInvoice(
+        nextOrder._id.toString(),
+      );
+      expect(nextInvoice.invoiceNumber).toBe('INV-202608-001-002');
+    });
+
+    it('does not allocate an invoice number when a cancelled non-invoiced order is converted', async () => {
+      const order = await createRegularOrder();
+      await service.cancelOrder(
+        order._id.toString(),
+        'Cancelled before invoice',
+        { id: 'owner-1' },
+      );
+
+      await expect(
+        service.convertToTaxInvoice(order._id.toString()),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(await counterModel.countDocuments({})).toBe(0);
+    });
+
+    it('applies VAT to the persisted net amount after discount during conversion', async () => {
+      const order = await createRegularOrder({
+        subtotal: 700,
+        total: 600,
+        discount: 100,
+        grandTotal: 600,
+        remainingTotal: 600,
+      });
+
+      const converted = await service.convertToTaxInvoice(order._id.toString());
+
+      expect(converted.subtotal).toBe(700);
+      expect(converted.discount).toBe(100);
+      expect(converted.vatAmount).toBe(42);
+      expect(converted.grandTotal).toBe(642);
+      expect(converted.remainingTotal).toBe(642);
     });
 
     it('rolls the counter allocation back when the order update cannot commit', async () => {

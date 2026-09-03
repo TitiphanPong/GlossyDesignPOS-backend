@@ -347,6 +347,16 @@ export class OrdersService {
           );
         }
 
+        const workflowStatus = this.resolveWorkflowStatus(existing.toObject());
+        if (workflowStatus === 'cancelled') {
+          if (existing.taxInvoice === 'yes' && hasCompleteInvoiceIdentity) {
+            return { order: existing, changed: false };
+          }
+          throw new ConflictException(
+            'Cancelled orders cannot be converted to a new tax invoice.',
+          );
+        }
+
         const storedSubtotalMinor = toMinorUnits(
           Number(existing.subtotal) || Number(existing.total) || 0,
           'subtotal',
