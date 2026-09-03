@@ -4,6 +4,7 @@ import type { OrderDocument } from '../orders/orders.schema';
 import type { StockItemDocument } from '../inventory/schemas/stock-item.schema';
 import type { NotificationDocument } from './notifications.schema';
 import type { ProductionJobDocument } from '../production/schemas/production-job.schema';
+import type { NotificationUserStateDocument } from './notification-user-state.schema';
 import { NotificationsService } from './notifications.service';
 
 function notification(overrides: Partial<Record<string, unknown>> = {}) {
@@ -66,6 +67,9 @@ describe('NotificationsService action center', () => {
     expect(filter?.type.$in).not.toContain('order_overdue');
     expect(result.summary).toEqual({
       total: 3,
+      attention: 3,
+      acknowledged: 0,
+      snoozed: 0,
       critical: 1,
       outstandingAmount: 350,
       filesWaiting: 1,
@@ -378,5 +382,169 @@ describe('NotificationsService action center', () => {
     expect(orderFind).not.toHaveBeenCalled();
     expect(notificationFindOne).not.toHaveBeenCalled();
     expect(createSpy).not.toHaveBeenCalled();
+  });
+
+  it('projects acknowledgement and snooze per user without changing operational truth', async () => {
+    const notifications = [
+      notification({ _id: 'new-item', type: 'payment_outstanding' }),
+      notification({
+        _id: 'ack-item',
+        type: 'order_ready_for_pickup',
+        category: 'follow_up',
+      }),
+      notification({
+        _id: 'snooze-item',
+        type: 'upload_review_required',
+        entityType: 'upload',
+      }),
+    ] as NotificationDocument[];
+    const notificationExec = jest.fn().mockResolvedValue(notifications);
+    const notificationSort = jest
+      .fn()
+      .mockReturnValue({ exec: notificationExec });
+    const notificationFind = jest
+      .fn()
+      .mockReturnValue({ sort: notificationSort });
+    const stateExec = jest.fn().mockResolvedValue([
+      {
+        userId: 'user-1',
+        notificationId: 'ack-item',
+        acknowledgedAt: new Date('2026-09-03T08:10:00.000Z'),
+        updatedAt: new Date('2026-09-03T08:10:00.000Z'),
+      },
+      {
+        userId: 'user-1',
+        notificationId: 'snooze-item',
+        snoozedUntil: new Date('2099-09-03T09:00:00.000Z'),
+        updatedAt: new Date('2026-09-03T08:11:00.000Z'),
+      },
+    ] as NotificationUserStateDocument[]);
+    const stateFind = jest.fn().mockReturnValue({ exec: stateExec });
+    const service = new NotificationsService(
+      { find: notificationFind } as unknown as Model<NotificationDocument>,
+      {} as Model<OrderDocument>,
+      {} as Model<StockItemDocument>,
+      undefined,
+      { find: stateFind } as unknown as Model<NotificationUserStateDocument>,
+    );
+    jest.spyOn(service, 'syncLowStockNotifications').mockResolvedValue();
+    jest
+      .spyOn(service, 'syncOverdueProductionNotifications')
+      .mockResolvedValue();
+
+    const result = await service.getActionCenter('user-1');
+
+    expect(result.summary).toEqual(
+      expect.objectContaining({
+        total: 3,
+        attention: 1,
+        acknowledged: 1,
+        snoozed: 1,
+      }),
+    );
+    expect(
+      result.items.find((item) => item._id === 'new-item')?.attentionState,
+    ).toBe('new');
+    expect(
+      result.items.find((item) => item._id === 'ack-item')?.attentionState,
+    ).toBe('acknowledged');
+    expect(
+      result.items.find((item) => item._id === 'snooze-item')?.attentionState,
+    ).toBe('snoozed');
+  });
+
+  it('ignores user visibility state from a previous resolved occurrence', async () => {
+    const reopened = notification({
+      _id: 'reopened-item',
+      lastInactiveAt: new Date('2026-09-03T08:20:00.000Z'),
+    }) as NotificationDocument;
+    const notificationExec = jest.fn().mockResolvedValue([reopened]);
+    const notificationFind = jest.fn().mockReturnValue({
+      sort: jest.fn().mockReturnValue({ exec: notificationExec }),
+    });
+    const stateFind = jest.fn().mockReturnValue({
+      exec: jest.fn().mockResolvedValue([
+        {
+          userId: 'user-1',
+          notificationId: 'reopened-item',
+          acknowledgedAt: new Date('2026-09-03T08:10:00.000Z'),
+          updatedAt: new Date('2026-09-03T08:10:00.000Z'),
+        },
+      ]),
+    });
+    const service = new NotificationsService(
+      { find: notificationFind } as unknown as Model<NotificationDocument>,
+      {} as Model<OrderDocument>,
+      {} as Model<StockItemDocument>,
+      undefined,
+      { find: stateFind } as unknown as Model<NotificationUserStateDocument>,
+    );
+    jest.spyOn(service, 'syncLowStockNotifications').mockResolvedValue();
+    jest
+      .spyOn(service, 'syncOverdueProductionNotifications')
+      .mockResolvedValue();
+
+    const result = await service.getActionCenter('user-1');
+
+    expect(result.summary.attention).toBe(1);
+    expect(result.items[0]?.attentionState).toBe('new');
+  });
+
+  it('stores acknowledgement per user and never resolves the notification itself', async () => {
+    const find = jest.fn().mockReturnValue({
+      exec: jest
+        .fn()
+        .mockResolvedValue([notification({ _id: 'notification-1' })]),
+    });
+    let capturedOperations: unknown[] | undefined;
+    const bulkWrite = jest.fn(async (operations: unknown[]) => {
+      capturedOperations = operations;
+      return { modifiedCount: 1 };
+    });
+    const service = new NotificationsService(
+      { find } as unknown as Model<NotificationDocument>,
+      {} as Model<OrderDocument>,
+      {} as Model<StockItemDocument>,
+      undefined,
+      { bulkWrite } as unknown as Model<NotificationUserStateDocument>,
+    );
+
+    const result = await service.updateActionCenterUserState('user-1', {
+      notificationIds: ['notification-1'],
+      action: 'acknowledge',
+    });
+
+    expect(result).toEqual({ updated: 1 });
+    expect(bulkWrite).toHaveBeenCalledTimes(1);
+    const firstOperation = capturedOperations?.[0] as
+      | {
+          updateOne?: {
+            filter?: { userId?: string; notificationId?: string };
+            upsert?: boolean;
+          };
+        }
+      | undefined;
+    expect(firstOperation?.updateOne?.filter).toEqual({
+      userId: 'user-1',
+      notificationId: 'notification-1',
+    });
+    expect(firstOperation?.updateOne?.upsert).toBe(true);
+  });
+
+  it('also blocks manual dismissal of follow-up items that belong to the operational Action Center', async () => {
+    const findById = jest
+      .fn()
+      .mockResolvedValue(
+        notification({ type: 'order_ready_for_pickup', category: 'follow_up' }),
+      );
+    const service = new NotificationsService(
+      { findById } as unknown as Model<NotificationDocument>,
+      {} as Model<OrderDocument>,
+      {} as Model<StockItemDocument>,
+    );
+
+    await expect(
+      service.dismissNotification('notification-1'),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 });

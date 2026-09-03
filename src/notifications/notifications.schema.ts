@@ -140,6 +140,11 @@ export class Notification {
   @Prop()
   dismissedAt?: Date;
 
+  // Last time this logical condition became inactive. User acknowledgement/snooze
+  // state older than this timestamp belongs to a previous occurrence and is ignored.
+  @Prop()
+  lastInactiveAt?: Date;
+
   createdAt?: Date;
   updatedAt?: Date;
 }

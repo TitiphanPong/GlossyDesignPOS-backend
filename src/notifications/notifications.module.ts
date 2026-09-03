@@ -12,11 +12,16 @@ import {
   ProductionJob,
   ProductionJobSchema,
 } from '../production/schemas/production-job.schema';
+import {
+  NotificationUserState,
+  NotificationUserStateSchema,
+} from './notification-user-state.schema';
 
 @Module({
   imports: [
     MongooseModule.forFeature([
       { name: Notification.name, schema: NotificationSchema },
+      { name: NotificationUserState.name, schema: NotificationUserStateSchema },
       { name: Order.name, schema: OrderSchema },
       { name: StockItem.name, schema: StockItemSchema },
       { name: ProductionJob.name, schema: ProductionJobSchema },

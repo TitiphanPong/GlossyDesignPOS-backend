@@ -3,6 +3,7 @@ import { validate } from 'class-validator';
 import {
   ActiveNotificationsQueryDto,
   ListNotificationsQueryDto,
+  UpdateActionCenterUserStateDto,
 } from './notification.dto';
 
 describe('notification query DTOs', () => {
@@ -25,5 +26,26 @@ describe('notification query DTOs', () => {
     });
 
     await expect(validate(query)).resolves.not.toHaveLength(0);
+  });
+
+  it('accepts a bounded Action Center snooze request', async () => {
+    const body = plainToInstance(UpdateActionCenterUserStateDto, {
+      notificationIds: ['notification-1', 'notification-2'],
+      action: 'snooze',
+      snoozeMinutes: '60',
+    });
+
+    await expect(validate(body)).resolves.toHaveLength(0);
+    expect(body.snoozeMinutes).toBe(60);
+  });
+
+  it('rejects snooze requests outside the supported window', async () => {
+    const body = plainToInstance(UpdateActionCenterUserStateDto, {
+      notificationIds: ['notification-1'],
+      action: 'snooze',
+      snoozeMinutes: 5,
+    });
+
+    await expect(validate(body)).resolves.not.toHaveLength(0);
   });
 });

@@ -1,12 +1,17 @@
 import { Transform, Type } from 'class-transformer';
 import type { TransformFnParams } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  ArrayMinSize,
+  IsArray,
   IsBoolean,
   IsEnum,
   IsInt,
   IsOptional,
+  IsString,
   Max,
   Min,
+  ValidateIf,
 } from 'class-validator';
 import {
   NOTIFICATION_CATEGORIES,
@@ -55,6 +60,12 @@ export class NotificationResponseDto {
     href?: string;
     action?: string;
   };
+
+  attentionState?: 'new' | 'acknowledged' | 'snoozed';
+
+  acknowledgedAt?: Date;
+
+  snoozedUntil?: Date;
 
   isRead!: boolean;
 
@@ -123,6 +134,12 @@ export class NotificationCountDto {
 export class ActionCenterSummaryDto {
   total!: number;
 
+  attention!: number;
+
+  acknowledged!: number;
+
+  snoozed!: number;
+
   critical!: number;
 
   outstandingAmount!: number;
@@ -139,4 +156,37 @@ export class ActionCenterDto {
 export class MarkNotificationReadDto {
   @IsBoolean()
   isRead!: boolean;
+}
+
+export const ACTION_CENTER_USER_ACTIONS = [
+  'acknowledge',
+  'unacknowledge',
+  'snooze',
+  'dismiss',
+] as const;
+export type ActionCenterUserAction =
+  (typeof ACTION_CENTER_USER_ACTIONS)[number];
+
+export class UpdateActionCenterUserStateDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(100)
+  @IsString({ each: true })
+  notificationIds!: string[];
+
+  @IsEnum(ACTION_CENTER_USER_ACTIONS)
+  action!: ActionCenterUserAction;
+
+  @ValidateIf(
+    (value: UpdateActionCenterUserStateDto) => value.action === 'snooze',
+  )
+  @Type(() => Number)
+  @IsInt()
+  @Min(15)
+  @Max(1440)
+  snoozeMinutes?: number;
+}
+
+export class ActionCenterUserStateResultDto {
+  updated!: number;
 }

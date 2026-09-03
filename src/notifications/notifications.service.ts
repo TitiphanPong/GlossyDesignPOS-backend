@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
@@ -18,6 +19,8 @@ import {
   ListNotificationsQueryDto,
   NotificationCountDto,
   ActionCenterDto,
+  UpdateActionCenterUserStateDto,
+  ActionCenterUserStateResultDto,
 } from './dto/notification.dto';
 import { Order, ORDER_WORKFLOW_STATUSES } from '../orders/orders.schema';
 import type {
@@ -32,6 +35,10 @@ import {
   ProductionJobDocument,
 } from '../production/schemas/production-job.schema';
 import { incompleteProductionJobMatch } from '../production/production-urgency';
+import {
+  NotificationUserState,
+  NotificationUserStateDocument,
+} from './notification-user-state.schema';
 
 interface CreateNotificationOptions {
   type: NotificationType;
@@ -84,6 +91,9 @@ export class NotificationsService {
     private readonly stockItemModel: Model<StockItemDocument>,
     @InjectModel(ProductionJob.name)
     private readonly productionJobModel?: Model<ProductionJobDocument>,
+    @Optional()
+    @InjectModel(NotificationUserState.name)
+    private readonly notificationUserStateModel?: Model<NotificationUserStateDocument>,
   ) {}
 
   /**
@@ -140,14 +150,16 @@ export class NotificationsService {
     if (!notification) {
       throw new NotFoundException(`Notification not found: ${notificationId}`);
     }
-    if (notification.category === 'action_required') {
+    if (this.isActionCenterNotification(notification.type)) {
       throw new BadRequestException(
-        'Action-required items resolve from the underlying business state.',
+        'Operational Action Center items resolve from the underlying business state.',
       );
     }
 
+    const now = new Date();
     notification.status = 'resolved';
-    notification.resolvedAt = new Date();
+    notification.resolvedAt = now;
+    notification.lastInactiveAt = now;
     await notification.save();
 
     return this.toResponseDto(notification);
@@ -163,14 +175,16 @@ export class NotificationsService {
     if (!notification) {
       throw new NotFoundException(`Notification not found: ${notificationId}`);
     }
-    if (notification.category === 'action_required') {
+    if (this.isActionCenterNotification(notification.type)) {
       throw new BadRequestException(
-        'Action-required items cannot be dismissed while the condition is active.',
+        'Operational Action Center items cannot be dismissed while the condition is active.',
       );
     }
 
+    const now = new Date();
     notification.status = 'dismissed';
-    notification.dismissedAt = new Date();
+    notification.dismissedAt = now;
+    notification.lastInactiveAt = now;
     await notification.save();
 
     return this.toResponseDto(notification);
@@ -194,6 +208,111 @@ export class NotificationsService {
     }
 
     return this.toResponseDto(notification);
+  }
+
+  /**
+   * Update only one staff user's visibility state for Action Center items.
+   * This never mutates the underlying operational notification status.
+   */
+  async updateActionCenterUserState(
+    userId: string,
+    input: UpdateActionCenterUserStateDto,
+  ): Promise<ActionCenterUserStateResultDto> {
+    if (!this.notificationUserStateModel) {
+      throw new BadRequestException('Action Center user state is unavailable.');
+    }
+
+    const notificationIds = [
+      ...new Set(input.notificationIds.map((id) => id.trim())),
+    ].filter(Boolean);
+    if (notificationIds.length === 0) {
+      throw new BadRequestException(
+        'At least one notification id is required.',
+      );
+    }
+
+    const notifications = await this.notificationModel
+      .find({ _id: { $in: notificationIds } })
+      .exec();
+    if (notifications.length !== notificationIds.length) {
+      throw new NotFoundException('One or more notifications were not found.');
+    }
+
+    if (input.action === 'dismiss') {
+      if (
+        notifications.some(
+          (item) =>
+            item.status === 'active' &&
+            this.isActionCenterNotification(item.type),
+        )
+      ) {
+        throw new BadRequestException(
+          'Operational Action Center items cannot be dismissed while their business condition is active.',
+        );
+      }
+    } else if (
+      notifications.some(
+        (item) =>
+          item.status !== 'active' ||
+          !this.isActionCenterNotification(item.type),
+      )
+    ) {
+      throw new BadRequestException(
+        'Acknowledge and snooze actions apply only to active operational Action Center items.',
+      );
+    }
+
+    const now = new Date();
+    const snoozedUntil =
+      input.action === 'snooze'
+        ? new Date(now.getTime() + (input.snoozeMinutes ?? 60) * 60_000)
+        : undefined;
+
+    const operations = notificationIds.map((notificationId) => {
+      const filter = { userId, notificationId };
+      if (input.action === 'unacknowledge') {
+        return {
+          updateOne: {
+            filter,
+            update: {
+              $set: { updatedAt: now },
+              $unset: { acknowledgedAt: 1, snoozedUntil: 1, dismissedAt: 1 },
+            },
+            upsert: false,
+          },
+        };
+      }
+
+      const setValues: Record<string, Date | string> = {
+        userId,
+        notificationId,
+        updatedAt: now,
+      };
+      if (input.action === 'acknowledge') setValues.acknowledgedAt = now;
+      if (input.action === 'snooze' && snoozedUntil)
+        setValues.snoozedUntil = snoozedUntil;
+      if (input.action === 'dismiss') setValues.dismissedAt = now;
+
+      return {
+        updateOne: {
+          filter,
+          update: {
+            $set: setValues,
+            $setOnInsert: { createdAt: now },
+            $unset:
+              input.action === 'acknowledge'
+                ? { snoozedUntil: 1, dismissedAt: 1 }
+                : input.action === 'snooze'
+                  ? { acknowledgedAt: 1, dismissedAt: 1 }
+                  : { acknowledgedAt: 1, snoozedUntil: 1 },
+          },
+          upsert: true,
+        },
+      };
+    });
+
+    await this.notificationUserStateModel.bulkWrite(operations);
+    return { updated: notificationIds.length };
   }
 
   /**
@@ -276,7 +395,11 @@ export class NotificationsService {
         ...(activeKeys.length ? { notificationKey: { $nin: activeKeys } } : {}),
       },
       {
-        $set: { status: 'resolved', resolvedAt: new Date() },
+        $set: {
+          status: 'resolved',
+          resolvedAt: new Date(),
+          lastInactiveAt: new Date(),
+        },
       },
     );
   }
@@ -322,7 +445,11 @@ export class NotificationsService {
         ...(activeKeys.length ? { notificationKey: { $nin: activeKeys } } : {}),
       },
       {
-        $set: { status: 'resolved', resolvedAt: new Date() },
+        $set: {
+          status: 'resolved',
+          resolvedAt: new Date(),
+          lastInactiveAt: new Date(),
+        },
       },
     );
   }
@@ -331,7 +458,7 @@ export class NotificationsService {
    * Return the operational action queue and summary from one consistent snapshot.
    * Legacy order-created noise is intentionally excluded from this view.
    */
-  async getActionCenter(): Promise<ActionCenterDto> {
+  async getActionCenter(userId?: string): Promise<ActionCenterDto> {
     await Promise.all([
       this.syncLowStockNotifications(),
       this.syncOverdueProductionNotifications(),
@@ -342,6 +469,20 @@ export class NotificationsService {
       .sort({ createdAt: -1 })
       .exec();
 
+    const notificationIds = notifications.map((notification) =>
+      String(notification._id),
+    );
+    const userStates =
+      userId && this.notificationUserStateModel && notificationIds.length > 0
+        ? await this.notificationUserStateModel
+            .find({ userId, notificationId: { $in: notificationIds } })
+            .exec()
+        : [];
+    const stateByNotificationId = new Map(
+      userStates.map((state) => [state.notificationId, state] as const),
+    );
+    const now = new Date();
+
     const priorityOrder: Record<NotificationPriority, number> = {
       critical: 0,
       high: 1,
@@ -349,7 +490,33 @@ export class NotificationsService {
       low: 3,
     };
     const items = notifications
-      .map((notification) => this.toResponseDto(notification))
+      .map((notification) => {
+        const state = stateByNotificationId.get(String(notification._id));
+        const stateIsCurrent =
+          Boolean(state) &&
+          (!notification.lastInactiveAt ||
+            Boolean(
+              state?.updatedAt && state.updatedAt > notification.lastInactiveAt,
+            ));
+        const attentionState = !stateIsCurrent
+          ? ('new' as const)
+          : state?.snoozedUntil && state.snoozedUntil > now
+            ? ('snoozed' as const)
+            : state?.acknowledgedAt
+              ? ('acknowledged' as const)
+              : ('new' as const);
+
+        return {
+          ...this.toResponseDto(notification),
+          attentionState,
+          ...(stateIsCurrent && state?.acknowledgedAt
+            ? { acknowledgedAt: state.acknowledgedAt }
+            : {}),
+          ...(stateIsCurrent && state?.snoozedUntil
+            ? { snoozedUntil: state.snoozedUntil }
+            : {}),
+        };
+      })
       .sort((a, b) => {
         const priorityDiff =
           priorityOrder[a.priority] - priorityOrder[b.priority];
@@ -360,6 +527,12 @@ export class NotificationsService {
     return {
       summary: {
         total: items.length,
+        attention: items.filter((item) => item.attentionState === 'new').length,
+        acknowledged: items.filter(
+          (item) => item.attentionState === 'acknowledged',
+        ).length,
+        snoozed: items.filter((item) => item.attentionState === 'snoozed')
+          .length,
         critical: items.filter((item) => item.priority === 'critical').length,
         outstandingAmount: items
           .filter((item) => item.type === 'payment_outstanding')
@@ -446,6 +619,7 @@ export class NotificationsService {
           $set: {
             status: 'resolved',
             resolvedAt: new Date(),
+            lastInactiveAt: new Date(),
           },
         },
       );
@@ -463,6 +637,7 @@ export class NotificationsService {
         $set: {
           status: 'resolved',
           resolvedAt: new Date(),
+          lastInactiveAt: new Date(),
         },
       },
     );
@@ -487,6 +662,7 @@ export class NotificationsService {
           $set: {
             status: 'resolved',
             resolvedAt: new Date(),
+            lastInactiveAt: new Date(),
           },
         },
       );
@@ -620,6 +796,10 @@ export class NotificationsService {
    */
   async checkAndNotifyUnconfirmedOrders(): Promise<void> {
     return Promise.resolve();
+  }
+
+  private isActionCenterNotification(type: NotificationType): boolean {
+    return ACTION_CENTER_TYPES.includes(type);
   }
 
   private resolveEffectiveWorkflowStatus(
