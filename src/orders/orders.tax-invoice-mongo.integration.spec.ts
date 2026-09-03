@@ -33,6 +33,7 @@ function makeService(
   const notificationsService = {
     autoResolvePaymentNotifications: jest.fn().mockResolvedValue(undefined),
     handleOrderPaymentState: jest.fn().mockResolvedValue(undefined),
+    handleOrderStatusChange: jest.fn().mockResolvedValue(undefined),
   } as unknown as NotificationsService;
 
   return new OrdersService(
@@ -149,6 +150,51 @@ describeMongo(
       expect(stored?.grandTotal).toBe(107);
       expect(stored?.remainingTotal).toBe(107);
       expect(stored?.status).toBe('awaiting_payment');
+    });
+
+    it('keeps a cancelled issued invoice consumed and gives the replacement order the next number', async () => {
+      const cancelledOrder = await createRegularOrder({
+        saleDate: new Date('2026-09-03T03:00:00.000Z'),
+      });
+      const issued = await service.convertToTaxInvoice(
+        cancelledOrder._id.toString(),
+      );
+
+      expect(issued.invoiceNumber).toBe('INV-202609-001-001');
+      expect(issued.invoiceSequence).toBe('001');
+
+      const cancelled = await service.cancelOrder(
+        cancelledOrder._id.toString(),
+        'ยกเลิกเพื่อเปิด Order ใหม่',
+        { id: 'manager-1' },
+      );
+
+      expect(cancelled.status).toBe('cancelled');
+      expect(cancelled.invoiceNumber).toBe('INV-202609-001-001');
+      expect(cancelled.invoiceSequence).toBe('001');
+      expect(cancelled.cancellation?.correctiveDocumentRequired).toBe(true);
+
+      const replacementOrder = await createRegularOrder({
+        saleDate: new Date('2026-09-03T03:05:00.000Z'),
+      });
+      const replacement = await service.convertToTaxInvoice(
+        replacementOrder._id.toString(),
+      );
+      const counter = await counterModel
+        .findOne({ type: COUNTER_TYPE_TAX_INVOICE, year: 202609 })
+        .lean()
+        .exec();
+
+      expect(replacement.invoiceNumber).toBe('INV-202609-001-002');
+      expect(replacement.invoiceSequence).toBe('002');
+      expect(counter?.seq).toBe(2);
+
+      const storedCancelled = await orderModel
+        .findById(cancelledOrder._id)
+        .lean()
+        .exec();
+      expect(storedCancelled?.invoiceNumber).toBe('INV-202609-001-001');
+      expect(storedCancelled?.invoiceSequence).toBe('001');
     });
 
     it('rolls the counter allocation back when the order update cannot commit', async () => {
