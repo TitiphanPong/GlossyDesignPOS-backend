@@ -62,6 +62,7 @@ type RawOrder = {
   branchType?: string;
   branchNo?: string;
   subtotal?: number;
+  total?: number;
   discount?: number;
   vatAmount?: number;
   grandTotal?: number;
@@ -269,7 +270,7 @@ function buildReportItem(
   if (cancelled)
     addReview(reviewReasons, 'cancelled_requires_corrective_document');
 
-  const subtotalMinor = Math.max(0, toMinor(order.subtotal));
+  const subtotalMinor = Math.max(0, toMinor(order.subtotal ?? order.total));
   const discountMinor = Math.min(
     subtotalMinor,
     Math.max(0, toMinor(order.discount)),

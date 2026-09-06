@@ -87,6 +87,19 @@ describe('TaxInvoiceReportService', () => {
     });
   });
 
+  it('falls back to legacy total when historical orders do not store subtotal', () => {
+    const report = buildTaxInvoiceMonthlyReportFromOrders('202608', [
+      order({ subtotal: undefined, total: 100.1, discount: 0.05 }),
+    ]);
+
+    expect(report.documents[0]).toMatchObject({
+      subtotal: 100.1,
+      discount: 0.05,
+      taxableBase: 100.05,
+    });
+    expect(report.summary.taxableBase).toBe(100.05);
+  });
+
   it('falls back from missing invoicePeriod to saleDate and then createdAt and flags review', () => {
     const report = buildTaxInvoiceMonthlyReportFromOrders('202608', [
       order({ invoicePeriod: undefined }),
