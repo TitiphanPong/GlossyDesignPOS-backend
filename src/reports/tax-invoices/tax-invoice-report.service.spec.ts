@@ -58,6 +58,10 @@ function fakeModel(orders: TestOrder[]) {
   };
 }
 
+function countPdfPages(buffer: Buffer): number {
+  return buffer.toString('latin1').match(/\/Type\s*\/Page\b/g)?.length ?? 0;
+}
+
 describe('TaxInvoiceReportService', () => {
   it('uses persisted invoicePeriod and preserves satang totals without payment coupling', () => {
     const report = buildTaxInvoiceMonthlyReportFromOrders('202608', [
@@ -242,6 +246,8 @@ describe('TaxInvoiceReportService', () => {
     expect(invoicesPdf.buffer.subarray(0, 4).toString()).toBe('%PDF');
     expect(summaryPdf.count).toBe(1);
     expect(invoicesPdf.count).toBe(1);
+    expect(countPdfPages(summaryPdf.buffer)).toBe(1);
+    expect(countPdfPages(invoicesPdf.buffer)).toBe(1);
   });
 
   it('refuses a partial combined PDF and returns the failing document list', async () => {

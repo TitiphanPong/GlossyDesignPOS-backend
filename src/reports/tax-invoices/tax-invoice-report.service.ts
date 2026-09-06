@@ -907,7 +907,8 @@ export class TaxInvoiceReportService {
       const pageWidth = document.page.width;
       const pageHeight = document.page.height;
       const left = 30;
-      const footerTop = pageHeight - 35;
+      const footerY = pageHeight - document.page.margins.bottom - 24;
+      const footerTop = footerY - 12;
       const navy = '#16354D';
       const muted = '#64748B';
       const text = '#172033';
@@ -1063,13 +1064,13 @@ export class TaxInvoiceReportService {
           .text(
             `Glossy POS · สร้าง ${formatBangkokDateTime(report.generatedAt)}`,
             left,
-            footerTop + 8,
+            footerY,
             { lineBreak: false },
           );
         document.text(
           `หน้า ${pageIndex + 1} / ${range.count}`,
           pageWidth - 120,
-          footerTop + 8,
+          footerY,
           {
             width: 90,
             align: 'right',
@@ -1384,7 +1385,8 @@ export class TaxInvoiceReportService {
       const range = document.bufferedPageRange();
       for (let pageIndex = 0; pageIndex < range.count; pageIndex += 1) {
         document.switchToPage(range.start + pageIndex);
-        const bottom = document.page.height - 24;
+        const footerY =
+          document.page.height - document.page.margins.bottom - 24;
         document
           .fillColor('#64748B')
           .font('Thai')
@@ -1392,13 +1394,13 @@ export class TaxInvoiceReportService {
           .text(
             `รายงานงวด ${report.period} · สร้าง ${formatBangkokDateTime(report.generatedAt)}`,
             36,
-            bottom,
+            footerY,
             { lineBreak: false },
           );
         document.text(
           `หน้า ${pageIndex + 1} / ${range.count}`,
           document.page.width - 116,
-          bottom,
+          footerY,
           {
             width: 80,
             align: 'right',
