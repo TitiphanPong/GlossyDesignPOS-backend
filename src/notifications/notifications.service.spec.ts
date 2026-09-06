@@ -497,9 +497,9 @@ describe('NotificationsService action center', () => {
         .mockResolvedValue([notification({ _id: 'notification-1' })]),
     });
     let capturedOperations: unknown[] | undefined;
-    const bulkWrite = jest.fn(async (operations: unknown[]) => {
+    const bulkWrite = jest.fn((operations: unknown[]) => {
       capturedOperations = operations;
-      return { modifiedCount: 1 };
+      return Promise.resolve({ modifiedCount: 1 });
     });
     const service = new NotificationsService(
       { find } as unknown as Model<NotificationDocument>,
