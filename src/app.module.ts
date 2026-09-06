@@ -21,6 +21,7 @@ import { CustomerDisplayModule } from './customer-display/customer-display.modul
 import { LineModule } from './line/line.module';
 import { QuickSaleV2Module } from './quick-sale-v2/quick-sale-v2.module';
 import { QuotationsModule } from './quotations/quotations.module';
+import { ReportsModule } from './reports/reports.module';
 
 @Module({
   imports: [
@@ -50,6 +51,7 @@ import { QuotationsModule } from './quotations/quotations.module';
     LineModule,
     QuickSaleV2Module,
     QuotationsModule,
+    ReportsModule,
   ],
   controllers: [HealthController],
   providers: [

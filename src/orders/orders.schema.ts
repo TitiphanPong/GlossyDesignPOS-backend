@@ -405,3 +405,5 @@ OrderSchema.index({ workflowStatus: 1, createdAt: -1 });
 OrderSchema.index({ orderType: 1, createdAt: -1 });
 OrderSchema.index({ createdAt: -1 });
 OrderSchema.index({ saleDate: 1, status: 1 });
+OrderSchema.index({ invoicePeriod: 1, bookNo: 1, invoiceSequence: 1 });
+OrderSchema.index({ 'cancellation.cancelledAt': 1 });
