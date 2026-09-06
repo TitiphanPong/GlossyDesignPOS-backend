@@ -884,6 +884,17 @@ export class TaxInvoiceReportService {
     return directory;
   }
 
+  private resolveLogoPath(): string {
+    const candidates = [
+      join(__dirname, '..', '..', 'assets', 'logo', 'logo_website.png'),
+      join(process.cwd(), 'src', 'assets', 'logo', 'logo_website.png'),
+      join(process.cwd(), 'dist', 'assets', 'logo', 'logo_website.png'),
+    ];
+    const logo = candidates.find((candidate) => existsSync(candidate));
+    if (!logo) throw new Error('Tax invoice report logo asset is missing.');
+    return logo;
+  }
+
   private buildSummaryPdf(report: TaxInvoiceMonthlyReport): Promise<Buffer> {
     const font = join(this.resolveFontDirectory(), 'NotoSansThai-Variable.ttf');
     return new Promise((resolve, reject) => {
@@ -1084,6 +1095,7 @@ export class TaxInvoiceReportService {
 
   private buildInvoicesPdf(report: TaxInvoiceMonthlyReport): Promise<Buffer> {
     const font = join(this.resolveFontDirectory(), 'NotoSansThai-Variable.ttf');
+    const logo = this.resolveLogoPath();
     const seller = companyInfo();
     return new Promise((resolve, reject) => {
       const document = new PDFDocument({
@@ -1112,7 +1124,7 @@ export class TaxInvoiceReportService {
           .font('ThaiBold')
           .fontSize(46)
           .rotate(-28, { origin: [page.width / 2, page.height / 2] })
-          .text('ยกเลิก / CANCELLED', 80, page.height / 2 - 25, {
+          .text('ยกเลิก', 80, page.height / 2 - 25, {
             width: page.width - 160,
             align: 'center',
             lineBreak: false,
@@ -1127,99 +1139,130 @@ export class TaxInvoiceReportService {
         const pageWidth = document.page.width;
         const left = document.page.margins.left;
         const contentWidth = pageWidth - left - document.page.margins.right;
+        const rightColumnX = left + contentWidth * 0.57;
+        const rightColumnWidth = contentWidth * 0.43;
+
+        document.image(logo, left, 34, { fit: [88, 52] });
         document
           .fillColor('#111827')
           .font('ThaiBold')
-          .fontSize(15)
-          .text(seller.thaiName, left, 36, { width: contentWidth * 0.64 });
+          .fontSize(11)
+          .text(seller.thaiName, left + 96, 36, {
+            width: contentWidth * 0.39,
+          });
         document
           .font('Thai')
-          .fontSize(8)
-          .text(seller.englishName, left, 57, { width: contentWidth * 0.64 });
-        document.text(
-          `Tax ID: ${seller.taxId} · สาขา ${seller.branch} · โทร ${seller.phone}`,
-          left,
-          72,
-          { width: contentWidth * 0.68 },
-        );
-        document.text(seller.address, left, 85, { width: contentWidth * 0.68 });
-        document
-          .font('ThaiBold')
-          .fontSize(13)
+          .fontSize(7.5)
+          .text(seller.englishName, left + 96, 54, {
+            width: contentWidth * 0.39,
+          })
+          .text(seller.address, left, 89, {
+            width: contentWidth * 0.54,
+            height: 29,
+          })
           .text(
-            `${continued ? 'สำเนา ใบเสร็จรับเงิน / ใบกำกับภาษี (ต่อ)' : 'สำเนา ใบเสร็จรับเงิน / ใบกำกับภาษี'}`,
-            left + contentWidth * 0.54,
-            42,
-            { width: contentWidth * 0.46, align: 'right' },
+            `เลขประจำตัวผู้เสียภาษี ${seller.taxId} · สำนักงานใหญ่${seller.branch !== '-' ? ` (${seller.branch})` : ''} · โทร ${seller.phone}`,
+            left,
+            119,
+            { width: contentWidth * 0.55 },
+          );
+
+        document
+          .fillColor('#111827')
+          .font('ThaiBold')
+          .fontSize(14)
+          .text(
+            continued
+              ? 'ใบกำกับภาษี / ใบเสร็จรับเงิน (ต่อ)'
+              : 'ใบกำกับภาษี / ใบเสร็จรับเงิน',
+            rightColumnX,
+            36,
+            { width: rightColumnWidth, align: 'right' },
           );
         document
           .font('Thai')
-          .fontSize(8.5)
-          .text(`เล่มที่ ${item.bookNo}`, left + contentWidth * 0.56, 77, {
-            width: contentWidth * 0.44,
-            align: 'right',
-          });
-        document.text(
-          `เลขที่ ${item.invoiceNumber}`,
-          left + contentWidth * 0.56,
-          91,
-          {
-            width: contentWidth * 0.44,
-            align: 'right',
-          },
-        );
-        document.text(
-          `วันที่ ${formatBangkokDate(item.documentDate)}`,
-          left + contentWidth * 0.56,
-          105,
-          { width: contentWidth * 0.44, align: 'right' },
-        );
-        document
-          .moveTo(left, 126)
-          .lineTo(pageWidth - document.page.margins.right, 126)
-          .lineWidth(0.8)
-          .stroke('#CBD5E1');
-        document
-          .font('ThaiBold')
-          .fontSize(9)
-          .text(`ลูกค้า / Customer: ${item.customerName}`, left, 139);
-        document
-          .font('Thai')
           .fontSize(8)
+          .text(`เลขที่ใบกำกับ: ${item.invoiceNumber}`, rightColumnX, 70, {
+            width: rightColumnWidth,
+            align: 'right',
+          })
+          .text(`เล่มที่: ${item.bookNo}`, rightColumnX, 84, {
+            width: rightColumnWidth,
+            align: 'right',
+          })
           .text(
-            `ที่อยู่ / Address: ${item.customerAddress || '-'}`,
-            left,
-            156,
+            `วันที่: ${formatBangkokDate(item.documentDate)}`,
+            rightColumnX,
+            98,
             {
-              width: contentWidth,
-              height: 30,
+              width: rightColumnWidth,
+              align: 'right',
+            },
+          )
+          .text(
+            `เลขที่ Order/เลขที่งาน: ${item.orderNumber}`,
+            rightColumnX,
+            112,
+            {
+              width: rightColumnWidth,
+              align: 'right',
             },
           );
-        document.text(
-          `เลขประจำตัวผู้เสียภาษี / Tax ID: ${item.taxId || '-'}    สาขา: ${item.branch || '-'}`,
-          left,
-          188,
-          { width: contentWidth },
-        );
+
+        const buyerTop = 146;
+        const buyerHeight = 80;
+        document
+          .roundedRect(left, buyerTop, contentWidth, buyerHeight, 3)
+          .lineWidth(0.7)
+          .stroke('#94A3B8');
+        document
+          .fillColor('#111827')
+          .font('ThaiBold')
+          .fontSize(9)
+          .text('ข้อมูลผู้ซื้อ / Buyer', left + 10, buyerTop + 8, {
+            width: contentWidth - 20,
+          });
+        document
+          .font('Thai')
+          .fontSize(8)
+          .text(`ชื่อ/บริษัท: ${item.customerName}`, left + 10, buyerTop + 25, {
+            width: contentWidth - 20,
+          })
+          .text(
+            `ที่อยู่: ${item.customerAddress || '-'}`,
+            left + 10,
+            buyerTop + 40,
+            {
+              width: contentWidth - 20,
+              height: 24,
+            },
+          )
+          .text(
+            `เลขประจำตัวผู้เสียภาษี: ${item.taxId || '-'}    สาขา: ${item.branch || '-'}`,
+            left + 10,
+            buyerTop + 63,
+            { width: contentWidth - 20 },
+          );
+
         if (item.reportStatus === 'cancelled_review') drawCancellationMark();
-        return 214;
+        return buyerTop + buyerHeight + 14;
       };
 
       const drawItemHeader = (top: number): number => {
         const left = document.page.margins.left;
         const width = document.page.width - left - document.page.margins.right;
-        const cols = [42, width - 42 - 70 - 80, 70, 80];
+        const cols = [30, width - 30 - 48 - 72 - 82, 48, 72, 82];
         document.rect(left, top, width, 24).fill('#E5E7EB');
-        const labels = ['จำนวน', 'รายการ', 'ราคาต่อหน่วย', 'จำนวนเงิน'];
+        const labels = ['ลำดับ', 'รายการ', 'จำนวน', 'ราคาต่อหน่วย', 'ยอดรวม'];
         let x = left;
         labels.forEach((label, index) => {
           document
             .fillColor('#111827')
             .font('ThaiBold')
-            .fontSize(8)
+            .fontSize(7.5)
             .text(label, x + 4, top + 7, {
               width: cols[index] - 8,
-              align: index >= 2 ? 'right' : index === 0 ? 'center' : 'left',
+              align: index >= 3 ? 'right' : index === 1 ? 'left' : 'center',
               lineBreak: false,
             });
           x += cols[index];
@@ -1229,11 +1272,12 @@ export class TaxInvoiceReportService {
 
       const drawItemRow = (
         item: TaxInvoiceReportItem['items'][number],
+        ordinal: number,
         top: number,
       ): number => {
         const left = document.page.margins.left;
         const width = document.page.width - left - document.page.margins.right;
-        const cols = [42, width - 42 - 70 - 80, 70, 80];
+        const cols = [30, width - 30 - 48 - 72 - 82, 48, 72, 82];
         document.font('Thai').fontSize(8);
         const nameHeight = document.heightOfString(item.name, {
           width: cols[1] - 8,
@@ -1245,8 +1289,9 @@ export class TaxInvoiceReportService {
           .lineWidth(0.4)
           .stroke('#CBD5E1');
         const values = [
-          String(item.quantity),
+          String(ordinal),
           item.name,
+          String(item.quantity),
           formatMoney(item.unitPrice),
           formatMoney(item.amount),
         ];
@@ -1259,7 +1304,7 @@ export class TaxInvoiceReportService {
             .text(value, x + 4, top + 6, {
               width: cols[index] - 8,
               height: height - 8,
-              align: index >= 2 ? 'right' : index === 0 ? 'center' : 'left',
+              align: index >= 3 ? 'right' : index === 1 ? 'left' : 'center',
             });
           x += cols[index];
         });
@@ -1337,6 +1382,36 @@ export class TaxInvoiceReportService {
               { width },
             );
         }
+
+        const signatureTop = y + 86;
+        const signatureWidth = 168;
+        const receiverX = left + width - signatureWidth;
+        document
+          .fillColor('#111827')
+          .font('Thai')
+          .fontSize(8)
+          .moveTo(receiverX, signatureTop + 28)
+          .lineTo(receiverX + signatureWidth, signatureTop + 28)
+          .lineWidth(0.5)
+          .stroke('#94A3B8');
+        document.text(
+          'ผู้รับเงิน / ผู้มีอำนาจลงนาม',
+          receiverX,
+          signatureTop + 34,
+          {
+            width: signatureWidth,
+            align: 'center',
+          },
+        );
+        document.text(
+          'วันที่ ........................................',
+          receiverX,
+          signatureTop + 52,
+          {
+            width: signatureWidth,
+            align: 'center',
+          },
+        );
       };
 
       if (report.documents.length === 0) {
@@ -1355,13 +1430,13 @@ export class TaxInvoiceReportService {
 
       for (const item of report.documents) {
         let y = startPage(item, false);
-        for (const invoiceItem of item.items) {
+        for (const [itemIndex, invoiceItem] of item.items.entries()) {
           document.font('Thai').fontSize(8);
           const contentWidth =
             document.page.width -
             document.page.margins.left -
             document.page.margins.right;
-          const descriptionWidth = contentWidth - 42 - 70 - 80 - 8;
+          const descriptionWidth = contentWidth - 30 - 48 - 72 - 82 - 8;
           const projectedHeight = Math.max(
             24,
             Math.ceil(
@@ -1370,12 +1445,12 @@ export class TaxInvoiceReportService {
               }) + 10,
             ),
           );
-          if (y + projectedHeight > document.page.height - 145) {
+          if (y + projectedHeight > document.page.height - 190) {
             y = startPage(item, true);
           }
-          y = drawItemRow(invoiceItem, y);
+          y = drawItemRow(invoiceItem, itemIndex + 1, y);
         }
-        if (y + 155 > document.page.height - 36) {
+        if (y + 245 > document.page.height - 36) {
           document.addPage();
           y = drawInvoicePageHeader(item, true);
         }

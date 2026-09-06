@@ -250,6 +250,63 @@ describe('TaxInvoiceReportService', () => {
     expect(countPdfPages(invoicesPdf.buffer)).toBe(1);
   });
 
+  it('starts each invoice on a new page without inserting a trailing blank page', async () => {
+    const service = new TaxInvoiceReportService(
+      fakeModel([
+        order(),
+        order({
+          _id: 'mongo-2',
+          orderId: 'order-2',
+          orderNumber: 'ORD-0002',
+          invoiceNumber: 'INV-202608-001-002',
+          invoiceSequence: '002',
+        }),
+      ]) as never,
+    );
+
+    const invoicesPdf = await service.exportInvoicesPdf('202608');
+
+    expect(invoicesPdf.count).toBe(2);
+    expect(countPdfPages(invoicesPdf.buffer)).toBe(2);
+  });
+
+  it('keeps a long invoice multipage while preserving the original cancelled totals', async () => {
+    const longItems = Array.from({ length: 70 }, (_, index) => ({
+      name: `รายการงานพิมพ์ลำดับ ${index + 1} รายละเอียดสำหรับทดสอบการขึ้นหน้าต่อเนื่อง`,
+      qty: 1,
+      unitPrice: 10,
+      totalPrice: 10,
+    }));
+    const service = new TaxInvoiceReportService(
+      fakeModel([
+        order({
+          status: 'cancelled',
+          subtotal: 700,
+          vatAmount: 49,
+          grandTotal: 749,
+          cart: longItems,
+          cancellation: {
+            reason: 'ยกเลิกงาน',
+            cancelledAt: new Date('2026-08-20T03:00:00.000Z'),
+            correctiveDocumentRequired: true,
+            correctiveDocumentStatus: 'required',
+          },
+        }),
+      ]) as never,
+    );
+
+    const report = await service.getMonthlyReport('202608');
+    const invoicesPdf = await service.exportInvoicesPdf('202608');
+
+    expect(report.documents[0]).toMatchObject({
+      reportStatus: 'cancelled_review',
+      subtotal: 700,
+      vatAmount: 49,
+      grandTotal: 749,
+    });
+    expect(countPdfPages(invoicesPdf.buffer)).toBeGreaterThan(1);
+  });
+
   it('refuses a partial combined PDF and returns the failing document list', async () => {
     const service = new TaxInvoiceReportService(
       fakeModel([order({ invoiceSequence: undefined })]) as never,
