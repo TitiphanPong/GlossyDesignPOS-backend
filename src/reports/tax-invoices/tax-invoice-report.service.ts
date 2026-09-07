@@ -14,10 +14,7 @@ import {
   normalizeMonthScope,
 } from '../../common/export-filename';
 import { Order } from '../../orders/orders.schema';
-import {
-  buildCompanyTaxMetaLine,
-  resolveTaxInvoiceCompanyInfo,
-} from './tax-invoice-company-info';
+import { resolveTaxInvoiceCompanyInfo } from './tax-invoice-company-info';
 import {
   CrossPeriodCancellation,
   TaxInvoiceExportResult,
@@ -1130,107 +1127,151 @@ export class TaxInvoiceReportService {
         const rightColumnX = left + contentWidth * 0.57;
         const rightColumnWidth = contentWidth * 0.43;
 
-        document.image(logo, left, 34, { fit: [88, 52] });
-        document
-          .fillColor('#111827')
-          .font('ThaiBold')
-          .fontSize(11)
-          .text(seller.thaiName, left + 96, 36, {
-            width: contentWidth * 0.39,
-          });
-        document
-          .font('Thai')
-          .fontSize(7.5)
-          .text(seller.englishName, left + 96, 54, {
-            width: contentWidth * 0.39,
-          })
-          .text(seller.address, left, 89, {
-            width: contentWidth * 0.54,
-            height: 29,
-          })
-          .text(buildCompanyTaxMetaLine(seller), left, 119, {
-            width: contentWidth * 0.55,
-          });
+        const sellerTextX = left;
+        const sellerWidth = contentWidth * 0.53;
+        // Keep the mark prominent while reserving enough space for the seller block below it.
+        document.image(logo, left, 30, { fit: [170, 76] });
 
-        document
-          .fillColor('#111827')
-          .font('ThaiBold')
-          .fontSize(14)
-          .text(
-            continued
-              ? 'ใบกำกับภาษี / ใบเสร็จรับเงิน (ต่อ)'
-              : 'ใบกำกับภาษี / ใบเสร็จรับเงิน',
-            rightColumnX,
-            36,
-            { width: rightColumnWidth, align: 'right' },
-          );
-        document
-          .font('Thai')
-          .fontSize(8)
-          .text(`เลขที่ใบกำกับ: ${item.invoiceNumber}`, rightColumnX, 70, {
-            width: rightColumnWidth,
-            align: 'right',
-          })
-          .text(`เล่มที่: ${item.bookNo}`, rightColumnX, 84, {
-            width: rightColumnWidth,
-            align: 'right',
-          })
-          .text(
-            `วันที่: ${formatBangkokDate(item.documentDate)}`,
-            rightColumnX,
-            98,
-            {
-              width: rightColumnWidth,
-              align: 'right',
-            },
-          )
-          .text(
-            `เลขที่ Order/เลขที่งาน: ${item.orderNumber}`,
-            rightColumnX,
-            112,
-            {
-              width: rightColumnWidth,
-              align: 'right',
-            },
-          );
+        // Advance by the rendered height so long names and addresses stay intact.
+        const writeLine = (
+          text: string,
+          x: number,
+          y: number,
+          width: number,
+          size = 8,
+          color = '#111827',
+          bold = false,
+          align: 'left' | 'center' | 'right' = 'left',
+        ): number => {
+          document
+            .fillColor(color)
+            .font(bold ? 'ThaiBold' : 'Thai')
+            .fontSize(size)
+            .text(text, x, y, { width, align, lineGap: 1 });
+          return document.y + 2;
+        };
 
-        const buyerTop = 146;
-        const buyerHeight = 80;
-        document
-          .roundedRect(left, buyerTop, contentWidth, buyerHeight, 3)
-          .lineWidth(0.7)
-          .stroke('#94A3B8');
-        document
-          .fillColor('#111827')
-          .font('ThaiBold')
-          .fontSize(9)
-          .text('ข้อมูลผู้ซื้อ / Buyer', left + 10, buyerTop + 8, {
-            width: contentWidth - 20,
-          });
-        document
-          .font('Thai')
-          .fontSize(8)
-          .text(`ชื่อ/บริษัท: ${item.customerName}`, left + 10, buyerTop + 25, {
-            width: contentWidth - 20,
-          })
-          .text(
-            `ที่อยู่: ${item.customerAddress || '-'}`,
-            left + 10,
-            buyerTop + 40,
-            {
-              width: contentWidth - 20,
-              height: 24,
-            },
-          )
-          .text(
-            `เลขประจำตัวผู้เสียภาษี: ${item.taxId || '-'}    สาขา: ${item.branch || '-'}`,
-            left + 10,
-            buyerTop + 63,
-            { width: contentWidth - 20 },
-          );
+        let sellerY = 106;
+        sellerY = writeLine(
+          seller.thaiName,
+          sellerTextX,
+          sellerY,
+          sellerWidth,
+          10,
+          '#111827',
+          true,
+        );
+        sellerY = writeLine(seller.address, sellerTextX, sellerY, sellerWidth);
+        sellerY = writeLine(
+          `เลขประจำตัวผู้เสียภาษี ${seller.taxId}`,
+          sellerTextX,
+          sellerY,
+          sellerWidth,
+        );
+        sellerY = writeLine(
+          seller.branchLabel,
+          sellerTextX,
+          sellerY,
+          sellerWidth,
+        );
+        sellerY = writeLine(
+          `เบอร์มือถือ ${seller.phone}`,
+          sellerTextX,
+          sellerY,
+          sellerWidth,
+        );
 
+        const rightLabelWidth = 70;
+        const rightValueX = rightColumnX + rightLabelWidth + 8;
+        const rightValueWidth = rightColumnWidth - rightLabelWidth - 8;
+        const rightCenterX = rightColumnX;
+        const rightDivider = (y: number) => {
+          document
+            .moveTo(rightColumnX, y)
+            .lineTo(rightColumnX + rightColumnWidth, y)
+            .lineWidth(0.5)
+            .stroke('#CBD5E1');
+        };
+
+        const rightTop = 56;
+        let metaY = writeLine(
+          continued
+            ? 'ใบกำกับภาษี / ใบเสร็จรับเงิน (ต่อ)'
+            : 'ใบกำกับภาษี / ใบเสร็จรับเงิน',
+          rightCenterX,
+          rightTop,
+          rightColumnWidth,
+          14,
+          '#111827',
+          true,
+          'center',
+        );
+        metaY =
+          writeLine(
+            'ต้นฉบับ (เอกสารออกเป็นชุด)',
+            rightCenterX,
+            metaY,
+            rightColumnWidth,
+            7,
+            '#64748B',
+            false,
+            'center',
+          ) + 3;
+        rightDivider(metaY);
+        metaY += 8;
+
+        const writeMetaRow = (label: string, value: string): void => {
+          const rowY = metaY;
+          writeLine(
+            label,
+            rightColumnX,
+            rowY,
+            rightLabelWidth,
+            8,
+            '#0284A8',
+            true,
+          );
+          metaY = writeLine(value, rightValueX, rowY, rightValueWidth, 8) + 3;
+        };
+        writeMetaRow('เลขที่', item.invoiceNumber);
+        writeMetaRow('เล่มที่', item.bookNo);
+        writeMetaRow('วันที่', formatBangkokDate(item.documentDate));
+        writeMetaRow('อ้างอิง', item.orderNumber);
+        rightDivider(metaY + 2);
+
+        let buyerY = Math.max(sellerY, 106) + 12;
+        buyerY = writeLine(
+          'ลูกค้า',
+          left,
+          buyerY,
+          sellerWidth,
+          9,
+          '#0284A8',
+          true,
+        );
+        buyerY = writeLine(
+          item.customerName,
+          left,
+          buyerY,
+          sellerWidth,
+          8.5,
+          '#111827',
+          true,
+        );
+        buyerY = writeLine(
+          item.customerAddress || '-',
+          left,
+          buyerY,
+          sellerWidth,
+        );
+        buyerY = writeLine(
+          `เลขประจำตัวผู้เสียภาษี ${item.taxId || '-'}`,
+          left,
+          buyerY,
+          sellerWidth,
+        );
         if (item.reportStatus === 'cancelled_review') drawCancellationMark();
-        return buyerTop + buyerHeight + 14;
+        return Math.max(buyerY, metaY) + 14;
       };
 
       const drawItemHeader = (top: number): number => {
