@@ -7,6 +7,10 @@ import PDFDocument from 'pdfkit';
 import { FilterQuery, Model, PipelineStage } from 'mongoose';
 import { DashboardSummaryQueryDto } from '../dashboard/dto/dashboard-summary-query.dto';
 import {
+  buildExportFilename,
+  resolveOrderExportDateScope,
+} from '../common/export-filename';
+import {
   ExportOrdersQueryDto,
   ListOrdersQueryDto,
 } from './dto/list-orders-query.dto';
@@ -549,20 +553,28 @@ export class OrderReportingService {
       this.orderModel.aggregate<ReportOrder>(this.listPipeline(query)),
       this.getOrderSummary(query),
     ]);
-    const filenamePeriod = query.saleMonth ?? 'all';
+    const filenameScope = resolveOrderExportDateScope(query);
     if (query.format === 'xlsx') {
       return {
         buffer: await this.buildWorkbook(orders, summary, query.saleMonth),
         contentType:
           'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        filename: `orders-${filenamePeriod}.xlsx`,
+        filename: buildExportFilename({
+          artifact: 'orders',
+          scope: filenameScope,
+          extension: 'xlsx',
+        }),
         count: orders.length,
       };
     }
     return {
       buffer: await this.buildPdf(orders, summary, query.saleMonth),
       contentType: 'application/pdf',
-      filename: `GlossyPOS-Sales-Statement-${filenamePeriod}.pdf`,
+      filename: buildExportFilename({
+        artifact: 'orders',
+        scope: filenameScope,
+        extension: 'pdf',
+      }),
       count: orders.length,
     };
   }

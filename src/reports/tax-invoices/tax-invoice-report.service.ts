@@ -9,6 +9,10 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import PDFDocument from 'pdfkit';
 import { FilterQuery, Model, Types } from 'mongoose';
+import {
+  buildExportFilename,
+  normalizeMonthScope,
+} from '../../common/export-filename';
 import { Order } from '../../orders/orders.schema';
 import {
   CrossPeriodCancellation,
@@ -506,10 +510,6 @@ function addGeneratedHeader(
   sheet.getRow(2).font = { bold: true };
 }
 
-function normalizeFilenamePeriod(period: string): string {
-  return period.replace(/[^0-9]/g, '');
-}
-
 function companyInfo() {
   return {
     thaiName:
@@ -770,7 +770,11 @@ export class TaxInvoiceReportService {
       buffer: Buffer.from(data),
       contentType:
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      filename: `tax-invoices-${normalizeFilenamePeriod(report.period)}.xlsx`,
+      filename: buildExportFilename({
+        artifact: 'tax-invoices',
+        scope: normalizeMonthScope(report.period),
+        extension: 'xlsx',
+      }),
       count: report.summary.documentCount,
       reviewCount: report.summary.reviewCount,
     };
@@ -781,7 +785,12 @@ export class TaxInvoiceReportService {
     return {
       buffer: await this.buildSummaryPdf(report),
       contentType: 'application/pdf',
-      filename: `tax-invoices-summary-${normalizeFilenamePeriod(report.period)}.pdf`,
+      filename: buildExportFilename({
+        artifact: 'tax-invoices',
+        variant: 'summary',
+        scope: normalizeMonthScope(report.period),
+        extension: 'pdf',
+      }),
       count: report.summary.documentCount,
       reviewCount: report.summary.reviewCount,
     };
@@ -800,7 +809,11 @@ export class TaxInvoiceReportService {
     return {
       buffer: await this.buildInvoicesPdf(report),
       contentType: 'application/pdf',
-      filename: `tax-invoices-${normalizeFilenamePeriod(report.period)}.pdf`,
+      filename: buildExportFilename({
+        artifact: 'tax-invoices',
+        scope: normalizeMonthScope(report.period),
+        extension: 'pdf',
+      }),
       count: report.summary.documentCount,
       reviewCount: report.summary.reviewCount,
     };

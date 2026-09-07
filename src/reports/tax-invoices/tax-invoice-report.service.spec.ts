@@ -229,6 +229,7 @@ describe('TaxInvoiceReportService', () => {
     await workbook.xlsx.load(exported.buffer);
     const sheet = workbook.getWorksheet('ใบกำกับภาษี');
 
+    expect(exported.filename).toBe('glossy-tax-invoices-2026-08.xlsx');
     expect(sheet?.getCell('B6').value).toBe('001');
     expect(sheet?.getCell('D6').value).toBe('001');
     expect(sheet?.getCell('G6').value).toBe('0012345678901');
@@ -244,6 +245,8 @@ describe('TaxInvoiceReportService', () => {
 
     expect(summaryPdf.buffer.subarray(0, 4).toString()).toBe('%PDF');
     expect(invoicesPdf.buffer.subarray(0, 4).toString()).toBe('%PDF');
+    expect(summaryPdf.filename).toBe('glossy-tax-invoices-summary-2026-08.pdf');
+    expect(invoicesPdf.filename).toBe('glossy-tax-invoices-2026-08.pdf');
     expect(summaryPdf.count).toBe(1);
     expect(invoicesPdf.count).toBe(1);
     expect(countPdfPages(summaryPdf.buffer)).toBe(1);
