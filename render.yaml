@@ -26,3 +26,15 @@ services:
         sync: false
       - key: ORDER_NUMBER_TIMEZONE
         value: Asia/Bangkok
+      - key: COMPANY_THAI_NAME
+        value: กรอสซี่ ปริ้น แอนด์ พรีเมี่ยม
+      - key: COMPANY_ENGLISH_NAME
+        value: GLOSSY PRINT AND PREMIUM
+      - key: COMPANY_BRANCH_NO
+        value: สำนักงานใหญ่
+      - key: COMPANY_ADDRESS
+        value: 55 ถนนศรีนครินทร์ แขวงหนองบอน เขตประเวศ จังหวัดกรุงเทพฯ 10250
+      - key: COMPANY_PHONE
+        value: 081-555-2929
+      - key: COMPANY_TAX_ID
+        value: '3160100252587'
