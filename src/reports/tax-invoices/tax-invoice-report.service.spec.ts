@@ -1,5 +1,6 @@
 import { UnprocessableEntityException } from '@nestjs/common';
 import ExcelJS from 'exceljs';
+import PDFDocument from 'pdfkit';
 import {
   buildTaxInvoiceMonthlyReportFromOrders,
   TaxInvoiceReportService,
@@ -251,6 +252,50 @@ describe('TaxInvoiceReportService', () => {
     expect(invoicesPdf.count).toBe(1);
     expect(countPdfPages(summaryPdf.buffer)).toBe(1);
     expect(countPdfPages(invoicesPdf.buffer)).toBe(1);
+  });
+
+  it('flows a long buyer address above the item table without clipping it', async () => {
+    const address =
+      '123 อาคารทดสอบ ชั้น 4 ถนนตัวอย่าง แขวงหนองบอน เขตประเวศ กรุงเทพมหานคร 10250 '.repeat(
+        3,
+      );
+    const textSpy = jest.spyOn(PDFDocument.prototype, 'text');
+    try {
+      const service = new TaxInvoiceReportService(
+        fakeModel([order({ customerAddress: address })]) as never,
+      );
+      const exported = await service.exportInvoicesPdf('202608');
+      const calls = textSpy.mock.calls as unknown as Array<
+        [string, number, number, PDFKit.Mixins.TextOptions]
+      >;
+      const buyer = calls.find(([text]) => text === 'ลูกค้า')!;
+      const name = calls.find(([text]) => text === 'บริษัท ทดสอบ จำกัด')!;
+      const addressCall = calls.find(([text]) => text === address.trim())!;
+      const taxId = calls.find(
+        ([text]) => text === 'เลขประจำตัวผู้เสียภาษี 0012345678901',
+      )!;
+      const table = calls.find(([text]) => text === 'ลำดับ')!;
+      const sellerName = calls.find(
+        ([text]) => text === 'กรอสซี่ ปริ้น แอนด์ พรีเมี่ยม',
+      )!;
+      expect(sellerName[2]).toBeLessThan(buyer[2]);
+      expect(calls.some(([text]) => text === 'GLOSSY PRINT AND PREMIUM')).toBe(
+        false,
+      );
+      expect(calls.some(([text]) => text.startsWith('เบอร์มือถือ '))).toBe(
+        true,
+      );
+      expect(calls.some(([text]) => text.startsWith('สาขา: '))).toBe(false);
+      expect(buyer[1]).toBe(name[1]);
+      expect(name[1]).toBe(addressCall[1]);
+      expect(addressCall[3].height).toBeUndefined();
+      expect(addressCall[2]).toBeGreaterThan(name[2]);
+      expect(taxId[2]).toBeGreaterThan(addressCall[2] + 24);
+      expect(table[2]).toBeGreaterThan(taxId[2]);
+      expect(countPdfPages(exported.buffer)).toBe(1);
+    } finally {
+      textSpy.mockRestore();
+    }
   });
 
   it('starts each invoice on a new page without inserting a trailing blank page', async () => {
