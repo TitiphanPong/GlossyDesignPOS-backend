@@ -15,6 +15,10 @@ import {
 } from '../../common/export-filename';
 import { Order } from '../../orders/orders.schema';
 import {
+  buildCompanyTaxMetaLine,
+  resolveTaxInvoiceCompanyInfo,
+} from './tax-invoice-company-info';
+import {
   CrossPeriodCancellation,
   TaxInvoiceExportResult,
   TaxInvoiceMonthlyReport,
@@ -508,35 +512,6 @@ function addGeneratedHeader(
   sheet.addRow([]);
   sheet.getRow(1).font = { bold: true, size: 16 };
   sheet.getRow(2).font = { bold: true };
-}
-
-function companyInfo() {
-  return {
-    thaiName:
-      process.env.COMPANY_THAI_NAME?.trim() ||
-      process.env.NEXT_PUBLIC_COMPANY_THAI_NAME?.trim() ||
-      'Glossy Design',
-    englishName:
-      process.env.COMPANY_ENGLISH_NAME?.trim() ||
-      process.env.NEXT_PUBLIC_COMPANY_ENGLISH_NAME?.trim() ||
-      'Glossy Design',
-    branch:
-      process.env.COMPANY_BRANCH_NO?.trim() ||
-      process.env.NEXT_PUBLIC_COMPANY_BRANCH_NO?.trim() ||
-      '-',
-    taxId:
-      process.env.COMPANY_TAX_ID?.trim() ||
-      process.env.NEXT_PUBLIC_COMPANY_TAX_ID?.trim() ||
-      '-',
-    address:
-      process.env.COMPANY_ADDRESS?.trim() ||
-      process.env.NEXT_PUBLIC_COMPANY_ADDRESS?.trim() ||
-      '-',
-    phone:
-      process.env.COMPANY_PHONE?.trim() ||
-      process.env.NEXT_PUBLIC_COMPANY_PHONE?.trim() ||
-      '-',
-  };
 }
 
 const THAI_DIGITS = [
@@ -1109,7 +1084,7 @@ export class TaxInvoiceReportService {
   private buildInvoicesPdf(report: TaxInvoiceMonthlyReport): Promise<Buffer> {
     const font = join(this.resolveFontDirectory(), 'NotoSansThai-Variable.ttf');
     const logo = this.resolveLogoPath();
-    const seller = companyInfo();
+    const seller = resolveTaxInvoiceCompanyInfo();
     return new Promise((resolve, reject) => {
       const document = new PDFDocument({
         autoFirstPage: false,
@@ -1173,12 +1148,9 @@ export class TaxInvoiceReportService {
             width: contentWidth * 0.54,
             height: 29,
           })
-          .text(
-            `เลขประจำตัวผู้เสียภาษี ${seller.taxId} · สำนักงานใหญ่${seller.branch !== '-' ? ` (${seller.branch})` : ''} · โทร ${seller.phone}`,
-            left,
-            119,
-            { width: contentWidth * 0.55 },
-          );
+          .text(buildCompanyTaxMetaLine(seller), left, 119, {
+            width: contentWidth * 0.55,
+          });
 
         document
           .fillColor('#111827')
