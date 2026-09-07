@@ -86,7 +86,7 @@ describe('OrdersController (e2e)', () => {
     exportOrders.mockResolvedValue({
       buffer: Buffer.from('%PDF-test'),
       contentType: 'application/pdf',
-      filename: 'orders-2026-08.pdf',
+      filename: 'glossy-orders-2026-08.pdf',
       count: 12,
     });
 
@@ -96,7 +96,7 @@ describe('OrdersController (e2e)', () => {
       .expect('Content-Type', /application\/pdf/)
       .expect(
         'Content-Disposition',
-        'attachment; filename="orders-2026-08.pdf"',
+        'attachment; filename="glossy-orders-2026-08.pdf"',
       );
 
     expect(exportOrders).toHaveBeenCalledWith(
