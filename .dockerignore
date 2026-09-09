@@ -1,0 +1,17 @@
+.git
+.github
+node_modules
+dist
+build
+coverage
+.nyc_output
+.vscode
+.idea
+.env
+.env.*
+!.env.example
+*.log
+test-results
+.temp
+.tmp
+.worktrees
