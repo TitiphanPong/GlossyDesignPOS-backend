@@ -1,8 +1,8 @@
 import { extname } from 'node:path';
 import { BadRequestException } from '@nestjs/common';
 
-export const MAX_FILE_SIZE_BYTES = 7_500_000;
-export const MAX_UPLOAD_REQUEST_BYTES = 25_000_000;
+export const MAX_FILE_SIZE_BYTES = 20_000_000;
+export const MAX_UPLOAD_REQUEST_BYTES = 20_000_000;
 
 // Public-upload policy: fail closed before persistence. Files with incompatible
 // extension/MIME/signature are rejected rather than quarantined in S3.

@@ -8,6 +8,7 @@ import { HttpExceptionFilter } from '../src/common/filters/http-exception.filter
 import { JobType, UploadStage } from '../src/uploads/uploads.enums';
 import { AuditService } from '../src/auth/audit.service';
 import { LineLoginService } from '../src/line/line-login.service';
+import { MAX_FILE_SIZE_BYTES } from '../src/uploads/validators/upload-file.validator';
 
 describe('UploadsController (e2e)', () => {
   let app: INestApplication;
@@ -142,7 +143,7 @@ describe('UploadsController (e2e)', () => {
   });
 
   it('POST /uploads file too large', async () => {
-    const tooLargeBuffer = Buffer.alloc(7_500_001, 'a');
+    const tooLargeBuffer = Buffer.alloc(MAX_FILE_SIZE_BYTES + 1, 'a');
 
     await request(server)
       .post('/uploads')
