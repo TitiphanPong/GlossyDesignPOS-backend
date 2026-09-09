@@ -1,5 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import {
+  MAX_FILE_SIZE_BYTES,
   MAX_UPLOAD_REQUEST_BYTES,
   validateUploadedFiles,
 } from './upload-file.validator';
@@ -313,5 +314,31 @@ describe('validateUploadedFiles', () => {
     expect(() => validateUploadedFiles([first, second])).toThrow(
       'Upload request too large',
     );
+  });
+
+  it('accepts the exact 20 MB file boundary', () => {
+    expect(() =>
+      validateUploadedFiles([
+        file(
+          'boundary.pdf',
+          'application/pdf',
+          Buffer.from('%PDF-1.7', 'ascii'),
+          MAX_FILE_SIZE_BYTES,
+        ),
+      ]),
+    ).not.toThrow();
+  });
+
+  it('rejects files larger than 20 MB', () => {
+    expect(() =>
+      validateUploadedFiles([
+        file(
+          'too-large.pdf',
+          'application/pdf',
+          Buffer.from('%PDF-1.7', 'ascii'),
+          MAX_FILE_SIZE_BYTES + 1,
+        ),
+      ]),
+    ).toThrow('Upload request too large');
   });
 });
