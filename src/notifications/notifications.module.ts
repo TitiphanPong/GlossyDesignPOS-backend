@@ -4,6 +4,7 @@ import { Notification, NotificationSchema } from './notifications.schema';
 import { NotificationsService } from './notifications.service';
 import { NotificationsController } from './notifications.controller';
 import { Order, OrderSchema } from '../orders/orders.schema';
+import { Upload, UploadSchema } from '../uploads/schemas/upload.schema';
 import {
   StockItem,
   StockItemSchema,
@@ -23,6 +24,7 @@ import {
       { name: Notification.name, schema: NotificationSchema },
       { name: NotificationUserState.name, schema: NotificationUserStateSchema },
       { name: Order.name, schema: OrderSchema },
+      { name: Upload.name, schema: UploadSchema },
       { name: StockItem.name, schema: StockItemSchema },
       { name: ProductionJob.name, schema: ProductionJobSchema },
     ]),

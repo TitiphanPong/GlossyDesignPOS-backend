@@ -5,7 +5,7 @@ import {
   Optional,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { Notification } from './notifications.schema';
 import type {
   NotificationCategory,
@@ -27,7 +27,9 @@ import type {
   OrderDocument,
   OrderWorkflowStatus,
 } from '../orders/orders.schema';
-import type { UploadDocument } from '../uploads/schemas/upload.schema';
+import { Upload } from '../uploads/schemas/upload.schema';
+import { UploadStage, UploadStatus } from '../uploads/uploads.enums';
+import { fromMinorUnits, toMinorUnits } from '../orders/order-money';
 import { StockItem } from '../inventory/schemas/stock-item.schema';
 import type { StockItemDocument } from '../inventory/schemas/stock-item.schema';
 import {
@@ -69,6 +71,26 @@ type OrderStatusNotification = {
   customerName: string;
 };
 
+type OrderFacts = Pick<
+  Order,
+  | 'status'
+  | 'workflowStatus'
+  | 'statusHistory'
+  | 'remainingTotal'
+  | 'orderNumber'
+  | 'customerName'
+> & { _id: unknown };
+type UploadFacts = Pick<
+  Upload,
+  | 'uploadId'
+  | 'status'
+  | 'stage'
+  | 'customerName'
+  | 'displayName'
+  | 'linkedOrderId'
+  | 'linkedOrderNumber'
+> & { files?: Upload['files']; fileCount?: number };
+
 const ACTION_CENTER_TYPES: readonly NotificationType[] = [
   'payment_outstanding',
   'payment_failed',
@@ -94,6 +116,8 @@ export class NotificationsService {
     @Optional()
     @InjectModel(NotificationUserState.name)
     private readonly notificationUserStateModel?: Model<NotificationUserStateDocument>,
+    @InjectModel(Upload.name)
+    private readonly uploadModel?: Model<Upload>,
   ) {}
 
   /**
@@ -123,12 +147,19 @@ export class NotificationsService {
     };
 
     if (notificationKey) {
+      const unset: Record<string, 1> = { resolvedAt: 1, dismissedAt: 1 };
+      // Mongoose omits undefined $set values; explicitly clear removed upload context.
+      if (options.type === 'upload_review_required') {
+        for (const field of ['orderId', 'orderCode', 'customerName'] as const) {
+          if (values[field] === undefined) unset[field] = 1;
+        }
+      }
       const saved = await this.notificationModel.findOneAndUpdate(
         { notificationKey },
         {
           $set: values,
           $setOnInsert: { notificationKey },
-          $unset: { resolvedAt: 1, dismissedAt: 1 },
+          $unset: unset,
         },
         { new: true, upsert: true, setDefaultsOnInsert: true },
       );
@@ -462,6 +493,7 @@ export class NotificationsService {
     await Promise.all([
       this.syncLowStockNotifications(),
       this.syncOverdueProductionNotifications(),
+      this.syncOrderAndUploadNotifications(),
     ]);
 
     const notifications = await this.notificationModel
@@ -521,7 +553,10 @@ export class NotificationsService {
         const priorityDiff =
           priorityOrder[a.priority] - priorityOrder[b.priority];
         if (priorityDiff !== 0) return priorityDiff;
-        return b.createdAt.getTime() - a.createdAt.getTime();
+        return (
+          b.createdAt.getTime() - a.createdAt.getTime() ||
+          a._id.localeCompare(b._id)
+        );
       });
 
     return {
@@ -534,9 +569,15 @@ export class NotificationsService {
         snoozed: items.filter((item) => item.attentionState === 'snoozed')
           .length,
         critical: items.filter((item) => item.priority === 'critical').length,
-        outstandingAmount: items
-          .filter((item) => item.type === 'payment_outstanding')
-          .reduce((sum, item) => sum + (item.amount ?? 0), 0),
+        outstandingAmount: fromMinorUnits(
+          items
+            .filter((item) => item.type === 'payment_outstanding')
+            .reduce(
+              (sum, item) =>
+                sum + toMinorUnits(item.amount ?? 0, 'outstandingAmount'),
+              0,
+            ),
+        ),
         filesWaiting: items.filter(
           (item) => item.type === 'upload_review_required',
         ).length,
@@ -608,7 +649,10 @@ export class NotificationsService {
     if (!order) return;
 
     // If payment is fully received
-    if (order.remainingTotal <= 0) {
+    if (
+      order.remainingTotal <= 0 ||
+      this.resolveEffectiveWorkflowStatus(order) === 'cancelled'
+    ) {
       await this.notificationModel.updateMany(
         {
           orderId,
@@ -651,7 +695,11 @@ export class NotificationsService {
     const order = await this.orderModel.findById(orderId);
     if (!order) return;
 
-    if (this.resolveEffectiveWorkflowStatus(order) === 'delivered') {
+    if (
+      ['delivered', 'cancelled'].includes(
+        this.resolveEffectiveWorkflowStatus(order) ?? '',
+      )
+    ) {
       await this.notificationModel.updateMany(
         {
           orderId,
@@ -692,12 +740,23 @@ export class NotificationsService {
   async handleOrderPaymentState(order: OrderDocument): Promise<void> {
     if (!order._id) return;
 
+    const options = this.paymentNotification(order);
+    if (options) await this.createNotification(options);
+    else await this.autoResolvePaymentNotifications(String(order._id));
+  }
+
+  private paymentNotification(
+    order: OrderFacts,
+  ): CreateNotificationOptions | undefined {
     const orderId = String(order._id);
 
     // Payment outstanding notification
-    if (order.remainingTotal > 0) {
+    if (
+      order.remainingTotal > 0 &&
+      this.resolveEffectiveWorkflowStatus(order) !== 'cancelled'
+    ) {
       const key = `payment_outstanding:${orderId}`;
-      await this.createNotification({
+      return {
         type: 'payment_outstanding',
         category: 'action_required',
         priority: 'high',
@@ -714,7 +773,7 @@ export class NotificationsService {
           label: 'รับชำระเงิน',
           action: 'collect_payment',
         },
-      });
+      };
     }
   }
 
@@ -728,24 +787,7 @@ export class NotificationsService {
 
     switch (order.status) {
       case 'ready_for_pickup': {
-        const key = `order_ready:${orderId}`;
-        await this.createNotification({
-          type: 'order_ready_for_pickup',
-          category: 'follow_up',
-          priority: 'normal',
-          title: `งานพร้อมรับ #${order.orderNumber}`,
-          message: `${order.customerName} สามารถรับงานได้แล้ว`,
-          orderId,
-          orderCode: order.orderNumber,
-          customerName: order.customerName,
-          entityType: 'order',
-          entityId: orderId,
-          notificationKey: key,
-          action: {
-            label: 'เปิดรายการ',
-            action: 'open_order',
-          },
-        });
+        await this.createNotification(this.pickupNotification(order));
         break;
       }
 
@@ -753,24 +795,325 @@ export class NotificationsService {
         await this.autoResolvePickupNotifications(orderId);
         break;
       }
+      case 'cancelled': {
+        await Promise.all([
+          this.autoResolvePaymentNotifications(orderId),
+          this.autoResolvePickupNotifications(orderId),
+        ]);
+        break;
+      }
+    }
+  }
+
+  private pickupNotification(
+    order: OrderStatusNotification,
+  ): CreateNotificationOptions {
+    const orderId = String(order._id);
+    const key = `order_ready:${orderId}`;
+    return {
+      type: 'order_ready_for_pickup',
+      category: 'follow_up',
+      priority: 'normal',
+      title: `งานพร้อมรับ #${order.orderNumber}`,
+      message: `${order.customerName} สามารถรับงานได้แล้ว`,
+      orderId,
+      orderCode: order.orderNumber,
+      customerName: order.customerName,
+      entityType: 'order',
+      entityId: orderId,
+      notificationKey: key,
+      action: {
+        label: 'เปิดรายการ',
+        action: 'open_order',
+      },
+    };
+  }
+
+  /** Repair missed hooks using persisted facts and stable logical keys. No list cap. */
+  async syncOrderAndUploadNotifications(): Promise<void> {
+    const scanStartedAt = new Date();
+    const types: NotificationType[] = [
+      'payment_outstanding',
+      'payment_failed',
+      'order_ready_for_pickup',
+      'order_pickup_delayed',
+      'upload_review_required',
+      'upload_failed',
+    ];
+    const projection =
+      '_id notificationKey type status updatedAt lastInactiveAt orderId relatedUploadId category priority title message orderCode customerName amount entityType entityId action';
+    const active = await this.notificationModel
+      .find({ status: 'active', type: { $in: types } })
+      .select(projection)
+      .lean()
+      .exec();
+    const orderIds = active
+      .map((item) => item.orderId)
+      .filter((id): id is string => Boolean(id && Types.ObjectId.isValid(id)));
+    const uploadIds = active
+      .map((item) => item.relatedUploadId)
+      .filter(Boolean);
+    const [orders, uploads] = await Promise.all([
+      this.orderModel
+        .find({
+          $or: [
+            { _id: { $in: orderIds } },
+            {
+              status: { $ne: 'cancelled' },
+              $or: [
+                { remainingTotal: { $gt: 0 } },
+                { workflowStatus: 'ready_for_pickup' },
+                {
+                  workflowStatus: { $nin: ORDER_WORKFLOW_STATUSES },
+                  $or: [
+                    { status: 'ready_for_pickup' },
+                    { 'statusHistory.status': 'ready_for_pickup' },
+                  ],
+                },
+              ],
+            },
+          ],
+        })
+        .select(
+          '_id status workflowStatus statusHistory remainingTotal orderNumber customerName',
+        )
+        .lean()
+        .exec(),
+      this.uploadModel!.aggregate<UploadFacts>([
+        {
+          $match: {
+            $or: [
+              { uploadId: { $in: uploadIds } },
+              {
+                status: { $ne: UploadStatus.COMPLETED },
+                stage: { $nin: [UploadStage.COMPLETED, UploadStage.PENDING] },
+              },
+            ],
+          },
+        },
+        {
+          $project: {
+            uploadId: 1,
+            status: 1,
+            stage: 1,
+            customerName: 1,
+            displayName: 1,
+            linkedOrderId: 1,
+            linkedOrderNumber: 1,
+            fileCount: { $size: { $ifNull: ['$files', []] } },
+          },
+        },
+      ]).exec(),
+    ]);
+    const desired = new Map<string, CreateNotificationOptions>();
+    const ordersById = new Map(
+      orders.map((order) => [String(order._id), order]),
+    );
+    const uploadsById = new Map(
+      uploads.map((upload) => [upload.uploadId, upload]),
+    );
+    for (const order of orders) {
+      const payment = this.paymentNotification(order);
+      if (payment) desired.set(payment.notificationKey!, payment);
+      if (this.resolveEffectiveWorkflowStatus(order) === 'ready_for_pickup') {
+        const pickup = this.pickupNotification({
+          _id: String(order._id),
+          status: 'ready_for_pickup',
+          orderNumber: order.orderNumber,
+          customerName: order.customerName,
+        });
+        desired.set(pickup.notificationKey!, pickup);
+      }
+    }
+    for (const upload of uploads) {
+      if (this.isWaitingUpload(upload)) {
+        const review = this.uploadNotification(upload);
+        desired.set(review.notificationKey!, review);
+      }
+    }
+    const existing = desired.size
+      ? await this.notificationModel
+          .find({ notificationKey: { $in: [...desired.keys()] } })
+          .select(projection)
+          .lean()
+          .exec()
+      : [];
+    // Active baselines MUST precede source reads. A hook may update facts between
+    // the source scan and the desired-key lookup, even within one millisecond.
+    const activeByKey = new Map(
+      active.map((item) => [item.notificationKey, item]),
+    );
+    const byKey = new Map(existing.map((item) => [item.notificationKey, item]));
+    for (const [key, item] of activeByKey) byKey.set(key, item);
+    const observedFilter = (item: (typeof active)[number]) => ({
+      // Compare the observed facts too: distinct writes can share a millisecond.
+      ...Object.fromEntries(
+        projection
+          .split(' ')
+          .filter((key) => key !== '_id')
+          .map((key) => {
+            const value = (item as Record<string, unknown>)[key];
+            return [
+              key,
+              value === undefined ? { $exists: false } : { $eq: value },
+            ];
+          }),
+      ),
+      _id: item._id,
+      status: item.status,
+      updatedAt: item.updatedAt ?? { $exists: false },
+      $or: [
+        { updatedAt: { $lte: scanStartedAt } },
+        { updatedAt: { $exists: false } },
+      ],
+    });
+    const operations: Parameters<Model<NotificationDocument>['bulkWrite']>[0] =
+      [];
+    const now = new Date();
+    for (const [notificationKey, options] of desired) {
+      const previous = byKey.get(notificationKey);
+      if (previous && !activeByKey.has(notificationKey)) {
+        // A newly active key belongs to a concurrent hook. For inactive keys a
+        // same-ms timestamp is ambiguous: defer repair until the next snapshot.
+        if (
+          previous.status === 'active' ||
+          (previous.updatedAt && previous.updatedAt >= scanStartedAt)
+        )
+          continue;
+      }
+      if (previous?.updatedAt && previous.updatedAt > scanStartedAt) continue;
+      const values = { ...options, status: 'active' };
+      if (
+        previous?.status === 'active' &&
+        Object.entries(values).every(([key, value]) => {
+          if (key === 'action')
+            return (
+              previous.action?.label === options.action?.label &&
+              previous.action?.action === options.action?.action &&
+              previous.action?.href === options.action?.href
+            );
+          return (
+            JSON.stringify((previous as Record<string, unknown>)[key]) ===
+            JSON.stringify(value)
+          );
+        })
+      )
+        continue;
+      const set: Record<string, unknown> = {};
+      const unset: Record<string, 1> = { resolvedAt: 1, dismissedAt: 1 };
+      for (const [key, value] of Object.entries(values)) {
+        if (value === undefined) unset[key] = 1;
+        else set[key] = value;
+      }
+      operations.push({
+        updateOne: {
+          filter: previous ? observedFilter(previous) : { notificationKey },
+          update: previous
+            ? { $set: set, $unset: unset }
+            : {
+                $setOnInsert: {
+                  ...set,
+                  isRead: false,
+                  createdAt: now,
+                  updatedAt: now,
+                },
+              },
+          upsert: !previous,
+          // An insert race must leave an existing condition entirely untouched.
+          timestamps: Boolean(previous),
+        },
+      });
+    }
+    for (const item of active) {
+      if (item.status !== 'active' || desired.has(item.notificationKey ?? ''))
+        continue;
+      let inactive = [
+        'payment_outstanding',
+        'order_ready_for_pickup',
+        'upload_review_required',
+      ].includes(item.type);
+      const order = ordersById.get(item.orderId ?? '');
+      if (item.type === 'payment_failed' && order) {
+        inactive =
+          order.remainingTotal <= 0 ||
+          this.resolveEffectiveWorkflowStatus(order) === 'cancelled';
+      }
+      if (item.type === 'order_pickup_delayed' && order) {
+        inactive = ['delivered', 'cancelled'].includes(
+          this.resolveEffectiveWorkflowStatus(order) ?? '',
+        );
+      }
+      const upload = uploadsById.get(item.relatedUploadId ?? '');
+      if (item.type === 'upload_failed' && upload)
+        inactive = !this.isWaitingUpload(upload);
+      if (inactive)
+        operations.push({
+          updateOne: {
+            filter: observedFilter(item),
+            update: {
+              $set: {
+                status: 'resolved',
+                resolvedAt: now,
+                lastInactiveAt: now,
+              },
+            },
+          },
+        });
+    }
+    if (operations.length) {
+      try {
+        await this.notificationModel.bulkWrite(operations, { ordered: false });
+      } catch (error: unknown) {
+        // Concurrent unique-key inserts are safe: the next snapshot repairs any remaining delta.
+        const failure = error as {
+          writeErrors?: { code: number }[];
+          writeConcernErrors?: unknown[];
+          result?: { getWriteConcernError?: () => unknown };
+        };
+        if (
+          !failure.writeErrors?.length ||
+          failure.writeErrors.some((entry) => entry.code !== 11000) ||
+          failure.writeConcernErrors?.length ||
+          failure.result?.getWriteConcernError?.()
+        )
+          throw error;
+      }
     }
   }
 
   /**
    * Check and create upload-related notifications
    */
-  async handleUploadReview(upload: UploadDocument): Promise<void> {
+  async handleUploadReview(upload: Upload): Promise<void> {
+    if (!this.isWaitingUpload(upload)) {
+      await this.autoResolveUploadNotifications(upload.uploadId);
+      return;
+    }
+    await this.createNotification(this.uploadNotification(upload));
+  }
+
+  private isWaitingUpload(upload: UploadFacts): boolean {
+    return (
+      upload.status !== UploadStatus.COMPLETED &&
+      upload.stage !== UploadStage.COMPLETED &&
+      upload.stage !== UploadStage.PENDING
+    );
+  }
+
+  private uploadNotification(upload: UploadFacts): CreateNotificationOptions {
     const uploadId = upload.uploadId;
-    const orderId = upload.orderCode;
+    const orderId = upload.linkedOrderId || undefined;
 
     const key = `upload_review:${uploadId}`;
-    await this.createNotification({
+    return {
       type: 'upload_review_required',
       category: 'action_required',
       priority: 'high',
       title: `ไฟล์ใหม่รอตรวจสอบ`,
-      message: `${upload.files?.length || 1} ไฟล์ที่ต้องการตรวจสอบ`,
+      message: `${upload.fileCount || upload.files?.length || 1} ไฟล์ที่ต้องการตรวจสอบ`,
       orderId,
+      orderCode: upload.linkedOrderNumber || undefined,
+      customerName: upload.customerName || upload.displayName,
       relatedUploadId: uploadId,
       entityType: 'upload',
       entityId: uploadId,
@@ -779,7 +1122,7 @@ export class NotificationsService {
         label: 'ตรวจไฟล์',
         action: 'review_upload',
       },
-    });
+    };
   }
 
   /**
@@ -803,8 +1146,9 @@ export class NotificationsService {
   }
 
   private resolveEffectiveWorkflowStatus(
-    order: OrderDocument,
+    order: OrderFacts,
   ): OrderWorkflowStatus | null {
+    if (order.status === 'cancelled') return 'cancelled';
     const workflowStatuses = new Set<OrderWorkflowStatus>(
       ORDER_WORKFLOW_STATUSES,
     );

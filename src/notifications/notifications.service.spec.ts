@@ -23,6 +23,12 @@ function notification(overrides: Partial<Record<string, unknown>> = {}) {
 }
 
 describe('NotificationsService action center', () => {
+  beforeEach(() => {
+    jest
+      .spyOn(NotificationsService.prototype, 'syncOrderAndUploadNotifications')
+      .mockResolvedValue();
+  });
+  afterEach(() => jest.restoreAllMocks());
   it('returns one actionable snapshot with operational summary and priority ordering', async () => {
     const exec = jest.fn().mockResolvedValue([
       notification({ _id: 'payment', amount: 350 }),
