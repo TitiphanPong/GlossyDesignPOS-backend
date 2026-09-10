@@ -1,0 +1,118 @@
+{
+  "summary": {
+    "total": 5,
+    "attention": 3,
+    "acknowledged": 1,
+    "snoozed": 1,
+    "critical": 1,
+    "outstandingAmount": 100.25,
+    "filesWaiting": 1
+  },
+  "items": [
+    {
+      "_id": "64a000000000000000000001",
+      "category": "action_required",
+      "status": "active",
+      "isRead": false,
+      "createdAt": "2026-09-10T00:00:00.000Z",
+      "updatedAt": "2026-09-10T00:00:00.000Z",
+      "attentionState": "acknowledged",
+      "type": "payment_outstanding",
+      "priority": "critical",
+      "title": "เก็บเงิน ORD-100",
+      "entityType": "payment",
+      "entityId": "64b000000000000000000010",
+      "orderId": "64b000000000000000000010",
+      "orderCode": "ORD-100",
+      "customerName": "ลูกค้าทดสอบ",
+      "amount": 100.25,
+      "action": {
+        "label": "รับชำระเงิน",
+        "action": "collect_payment",
+        "_id": "64c000000000000000000001"
+      },
+      "acknowledgedAt": "2026-09-10T00:00:00.000Z"
+    },
+    {
+      "_id": "64a000000000000000000002",
+      "category": "action_required",
+      "status": "active",
+      "isRead": false,
+      "createdAt": "2026-09-10T00:00:00.000Z",
+      "updatedAt": "2026-09-10T00:00:00.000Z",
+      "attentionState": "new",
+      "type": "upload_review_required",
+      "priority": "high",
+      "title": "รายการไฟล์รอตรวจ A",
+      "message": "ตรวจไฟล์ก่อนเริ่มงาน",
+      "entityType": "upload",
+      "entityId": "upload-a",
+      "relatedUploadId": "upload-a",
+      "action": {
+        "label": "ตรวจไฟล์",
+        "action": "review_upload",
+        "_id": "64c000000000000000000002"
+      }
+    },
+    {
+      "_id": "64a000000000000000000003",
+      "category": "action_required",
+      "status": "active",
+      "isRead": false,
+      "createdAt": "2026-09-10T00:00:00.000Z",
+      "updatedAt": "2026-09-10T00:00:00.000Z",
+      "attentionState": "new",
+      "type": "production_overdue",
+      "priority": "high",
+      "title": "ผลิตเกินกำหนด ORD-101",
+      "entityType": "production_job",
+      "entityId": "64b000000000000000000011",
+      "dueDate": "2026-09-09T00:00:00.000Z",
+      "action": {
+        "label": "เปิดงานผลิต",
+        "action": "open_production_job",
+        "_id": "64c000000000000000000003"
+      }
+    },
+    {
+      "_id": "64a000000000000000000004",
+      "category": "action_required",
+      "status": "active",
+      "isRead": false,
+      "createdAt": "2026-09-10T00:00:00.000Z",
+      "updatedAt": "2026-09-10T00:00:00.000Z",
+      "attentionState": "new",
+      "type": "order_ready_for_pickup",
+      "priority": "normal",
+      "title": "งานพร้อมรับ ORD-102",
+      "entityType": "order",
+      "entityId": "64b000000000000000000012",
+      "orderId": "64b000000000000000000012",
+      "action": {
+        "label": "เปิดรายการ",
+        "action": "open_order",
+        "_id": "64c000000000000000000004"
+      }
+    },
+    {
+      "_id": "64a000000000000000000005",
+      "category": "action_required",
+      "status": "active",
+      "isRead": false,
+      "createdAt": "2026-09-10T00:00:00.000Z",
+      "updatedAt": "2026-09-10T00:00:00.000Z",
+      "attentionState": "snoozed",
+      "type": "low_stock",
+      "priority": "low",
+      "title": "สต็อกต่ำ กระดาษ A4",
+      "entityType": "stock",
+      "entityId": "64b000000000000000000013",
+      "action": {
+        "label": "เปิดสต็อก",
+        "action": "open_stock",
+        "_id": "64c000000000000000000005"
+      },
+      "snoozedUntil": "2026-09-10T01:00:00.000Z"
+    }
+  ]
+}

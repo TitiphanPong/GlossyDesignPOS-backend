@@ -524,16 +524,9 @@ export class UploadsService {
       return null;
     }
 
-    if (
-      row.uploadId &&
-      (row.status === UploadStatus.COMPLETED ||
-        row.stage === UploadStage.PENDING ||
-        row.stage === UploadStage.COMPLETED)
-    ) {
+    if (row.uploadId) {
       try {
-        await this.notificationsService.autoResolveUploadNotifications(
-          row.uploadId,
-        );
+        await this.notificationsService.handleUploadReview(row);
       } catch (error) {
         this.logger.error(
           'Failed to resolve action-center item for upload',
