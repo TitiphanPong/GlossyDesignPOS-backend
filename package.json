@@ -86,10 +86,10 @@
       "uuid": "^11.1.1"
     },
     "minimatch@3.1.5": {
-      "brace-expansion": "1.1.18"
+      "brace-expansion": "1.1.22"
     },
     "multer": "$multer",
-    "qs": "6.16.0",
+    "qs": "6.17.1",
     "@humanfs/node": "0.16.8"
   },
   "jest": {
