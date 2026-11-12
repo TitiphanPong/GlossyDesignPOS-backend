@@ -276,10 +276,11 @@ describe('OrdersService', () => {
         'admin',
       );
 
-    const result = await normalize('2026-08-18T14:30:00.000Z');
+    const yesterday = new Date(Date.now() - 86_400_000);
+    const result = await normalize(yesterday.toISOString());
     expect(result.entryMode).toBe('backdated');
     expect(result.isBackdated).toBe(true);
-    expect(result.saleDate).toEqual(new Date('2026-08-18T14:30:00.000Z'));
+    expect(result.saleDate).toEqual(yesterday);
     expect(result.backdatedReason).toBe('ตกหล่น');
 
     await expect(normalize('2999-01-01T00:00:00.000Z')).rejects.toBeInstanceOf(

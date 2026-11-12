@@ -292,7 +292,7 @@ describe('QuotationsService', () => {
       revision: 0,
       status: 'SENT',
       issuedAt: new Date('2026-09-01T03:00:00.000Z'),
-      validUntil: new Date('2026-09-10T16:59:59.999Z'),
+      validUntil: new Date(Date.now() + 86_400_000),
       items: [
         {
           name: 'Custom print',
